@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "mysql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+  archived
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+enum TaskSource {
+  manual
+  quick_add
+  ai
+  import
+}
+
+enum ReminderChannel {
+  in_app
+  email
+}
+
+enum ReminderStatus {
+  pending
+  sent
+  failed
+  cancelled
+}
+
+enum TimeEntryType {
+  task
+  manual
+  break
+  other
+}
+
+enum TimeEntrySource {
+  timer
+  manual
+  system
+  import
+}
+
+enum TimerSessionStatus {
+  idle
+  running
+  paused
+  completed
+  cancelled
+  error
+}
+
+enum TimerSessionMode {
+  task
+  focus
+  short_break
+  long_break
+}
+
+enum AiReportType {
+  task_parse
+  weekly_recap
+  monthly_recap
+}
+
+enum AiReportStatus {
+  queued
+  running
+  completed
+  failed
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String
+  emailVerified Boolean        @default(false)
+  image         String?
+  avatarUrl     String?
+  timezone      String         @default("Asia/Shanghai")
+  locale        String         @default("zh-CN")
+  personalSpace PersonalSpace?
+  sessions      Session[]
+  accounts      Account[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@map("user")
+}
+
+model PersonalSpace {
+  id              String         @id @default(cuid())
+  userId          String         @unique
+  name            String
+  themePreference String         @default("system")
+  weekStartsOn    Int            @default(1)
+  defaultView     String         @default("today")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lists           List[]
+  tags            Tag[]
+  tasks           Task[]
+  timeEntries     TimeEntry[]
+  timerSessions   TimerSession[]
+  aiReports       AiReport[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model List {
+  id         String        @id @default(cuid())
+  spaceId    String
+  parentId   String?
+  name       String
+  color      String?
+  sortOrder  Int           @default(0)
+  archivedAt DateTime?
+  space      PersonalSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parent     List?         @relation("ListChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children   List[]        @relation("ListChildren")
+  tasks      Task[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([spaceId, name])
+  @@index([spaceId, parentId])
+}
+
+model Tag {
+  id        String        @id @default(cuid())
+  spaceId   String
+  name      String
+  color     String?
+  space     PersonalSpace @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  taskTags  TaskTag[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([spaceId, name])
+}
+
+model Task {
+  id                String          @id @default(cuid())
+  spaceId           String
+  listId            String?
+  title             String
+  description       String?
+  status            TaskStatus      @default(todo)
+  priority          TaskPriority    @default(medium)
+  source            TaskSource      @default(manual)
+  startAt           DateTime?
+  dueAt             DateTime?
+  completedAt       DateTime?
+  estimatedMinutes  Int?
+  actualMinutes     Int             @default(0)
+  timeEntryCount    Int             @default(0)
+  lastTimerStartedAt DateTime?
+  archivedAt        DateTime?
+  space             PersonalSpace   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  list              List?           @relation(fields: [listId], references: [id], onDelete: SetNull)
+  taskTags          TaskTag[]
+  reminders         Reminder[]
+  recurrenceRule    RecurrenceRule?
+  timeEntries       TimeEntry[]
+  timerSessions     TimerSession[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([spaceId, status])
+  @@index([spaceId, dueAt])
+  @@index([spaceId, startAt])
+  @@index([spaceId, listId, updatedAt])
+}
+
+model TaskTag {
+  taskId    String
+  tagId     String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([taskId, tagId])
+}
+
+model Reminder {
+  id              String          @id @default(cuid())
+  taskId          String
+  triggerAt       DateTime
+  channel         ReminderChannel @default(in_app)
+  status          ReminderStatus  @default(pending)
+  lastTriggeredAt DateTime?
+  task            Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model RecurrenceRule {
+  id               String   @id @default(cuid())
+  taskId           String   @unique
+  rrule            String
+  timezone         String
+  nextOccurrenceAt DateTime?
+  skipCurrent      Boolean  @default(false)
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model TimeEntry {
+  id              String          @id @default(cuid())
+  spaceId         String
+  taskId          String?
+  title           String
+  startedAt       DateTime
+  endedAt         DateTime
+  durationSec     Int
+  entryType       TimeEntryType   @default(task)
+  source          TimeEntrySource @default(timer)
+  isAutoGenerated Boolean         @default(true)
+  notes           String?
+  space           PersonalSpace   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  task            Task?           @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([spaceId, startedAt])
+  @@index([taskId, startedAt])
+  @@index([spaceId, entryType, startedAt])
+}
+
+model TimerSession {
+  id              String             @id @default(cuid())
+  spaceId         String
+  taskId          String?
+  status          TimerSessionStatus @default(idle)
+  mode            TimerSessionMode   @default(task)
+  startedAt       DateTime?
+  pausedAt        DateTime?
+  endedAt         DateTime?
+  accumulatedSec  Int                @default(0)
+  clientSessionId String?            @unique
+  space           PersonalSpace      @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  task            Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model AiReport {
+  id               String         @id @default(cuid())
+  spaceId          String
+  reportType       AiReportType
+  status           AiReportStatus @default(queued)
+  rangeStart       DateTime
+  rangeEnd         DateTime
+  inputSnapshot    Json?
+  generatedContent Json?
+  editedContent    Json?
+  model            String?
+  requestedAt      DateTime       @default(now())
+  completedAt      DateTime?
+  space            PersonalSpace  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([spaceId, reportType, status])
+}

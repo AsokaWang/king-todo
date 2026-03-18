@@ -1,0 +1,236 @@
+"use client"
+
+import Link from "next/link"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
+import { CalendarDays, CornerDownLeft, Search, X } from "lucide-react"
+
+type SearchTaskItem = {
+  id: string
+  title: string
+  description?: string | null
+  status: "todo" | "in_progress" | "done" | "archived"
+  priority: "low" | "medium" | "high"
+  dueAt?: string | null
+}
+
+type SearchResponse = {
+  items: SearchTaskItem[]
+}
+
+type TaskSearchModalProps = {
+  open: boolean
+  onClose: () => void
+}
+
+const statusLabelMap = {
+  todo: "待办",
+  in_progress: "进行中",
+  done: "已完成",
+  archived: "已归档",
+}
+
+const priorityDotClassMap = {
+  low: "bg-muted-foreground/40",
+  medium: "bg-accent",
+  high: "bg-destructive",
+}
+
+export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
+  const router = useRouter()
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [query, setQuery] = useState("")
+  const [items, setItems] = useState<SearchTaskItem[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [isFocused, setIsFocused] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("")
+      setItems([])
+      setActiveIndex(0)
+      return
+    }
+
+    inputRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose()
+        return
+      }
+
+      if (!items.length) {
+        return
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setActiveIndex((current) => (current + 1) % items.length)
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setActiveIndex((current) => (current - 1 + items.length) % items.length)
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault()
+        const activeItem = items[activeIndex]
+        if (activeItem) {
+          router.push(`/tasks/${activeItem.id}`)
+          onClose()
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeydown)
+    return () => window.removeEventListener("keydown", handleKeydown)
+  }, [activeIndex, items, onClose, open, router])
+
+  useEffect(() => {
+    if (!open || !query.trim()) {
+      setItems([])
+      setActiveIndex(0)
+      return
+    }
+
+    let active = true
+
+    const timeout = window.setTimeout(async () => {
+      setIsLoading(true)
+
+      try {
+        const response = await fetch(`/api/tasks?q=${encodeURIComponent(query.trim())}`, {
+          credentials: "include",
+          cache: "no-store",
+        })
+
+        const payload = await response.json()
+
+        if (active && response.ok && payload.ok) {
+          const data = payload.data as SearchResponse
+          setItems(data.items)
+          setActiveIndex(0)
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false)
+        }
+      }
+    }, 180)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeout)
+    }
+  }, [open, query])
+
+  const resultCountText = useMemo(() => {
+    if (!query.trim()) return "输入关键词开始搜索"
+    if (isLoading) return "正在检索任务"
+    return `共 ${items.length} 条结果`
+  }, [isLoading, items.length, query])
+
+  if (!open) {
+    return null
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-start justify-center bg-black/12 px-4 pt-[12vh] backdrop-blur-[2px]">
+      <button type="button" aria-label="关闭搜索弹窗" className="absolute inset-0" onClick={onClose} />
+
+      <div className="relative z-10 w-full max-w-[760px] overflow-hidden rounded-[20px] border border-border/80 bg-card/95 shadow-[0_20px_60px_rgba(15,23,42,0.16)]">
+        <div className={`relative flex items-center gap-3 border-b px-4 py-3 transition-colors ${isFocused ? "border-primary/20 bg-primary/5" : "border-border bg-card/95"}`}>
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <input
+            ref={inputRef}
+            autoFocus
+            className="h-9 flex-1 bg-transparent text-sm font-medium outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:font-normal placeholder:text-muted-foreground"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder="搜索任务标题、描述、提醒线索"
+          />
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <span className={`pointer-events-none absolute inset-x-4 bottom-0 h-px origin-left transition-all ${isFocused ? "scale-x-100 bg-primary/45" : "scale-x-0 bg-transparent"}`} />
+        </div>
+
+        <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">{resultCountText}</div>
+
+        <div className="max-h-[420px] overflow-y-auto py-1">
+          {!query.trim() ? (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">输入文本开始检索任务，支持回车快速打开。</div>
+          ) : isLoading ? (
+            <div className="px-2 py-2">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div key={index} className="flex items-center gap-3 rounded-xl px-3 py-3">
+                  <div className="h-2 w-2 animate-pulse rounded-full bg-muted" />
+                  <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          ) : items.length ? (
+            <div className="px-2 py-2">
+              {items.map((item, index) => (
+                <Link
+                  key={item.id}
+                  href={`/tasks/${item.id}`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={onClose}
+                  className={`block rounded-xl px-3 py-2.5 transition-colors ${
+                    index === activeIndex ? "bg-primary/8 ring-1 ring-primary/10" : "hover:bg-muted/70"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${priorityDotClassMap[item.priority]}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="truncate text-[13px] font-medium text-foreground">{item.title}</p>
+                        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{statusLabelMap[item.status]}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[12px] text-muted-foreground">
+                        {item.description?.trim() ? <p className="truncate">{item.description.trim()}</p> : <p className="truncate">暂无描述</p>}
+                        {item.dueAt ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background px-2 py-0.5">
+                            <CalendarDays className="h-3 w-3" />
+                            {new Date(item.dueAt).toLocaleDateString("zh-CN")}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">未找到匹配的任务，试试标题关键词或描述片段。</div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+          <span>↑↓ 选择结果</span>
+          <span className="inline-flex items-center gap-1">
+            <CornerDownLeft className="h-3 w-3" />
+            Enter 打开
+          </span>
+          <span>Esc 关闭</span>
+        </div>
+      </div>
+    </div>
+  )
+}
