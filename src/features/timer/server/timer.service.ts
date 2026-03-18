@@ -1,0 +1,214 @@
+import { prisma } from "@/server/db/client"
+import { ensureUserSpace } from "@/server/db/bootstrap"
+import { HttpError } from "@/server/errors/http"
+
+type CurrentUser = {
+  id: string
+  email: string
+  name?: string | null
+  image?: string | null
+}
+
+function ensureSessionExists<T>(session: T | null): T {
+  if (!session) {
+    throw new HttpError(404, "NOT_FOUND", "Active timer session not found.")
+  }
+
+  return session
+}
+
+function getElapsedSec(startedAt: Date | null, now: Date) {
+  if (!startedAt) {
+    return 0
+  }
+
+  return Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000))
+}
+
+export async function getCurrentTimerForUser(user: CurrentUser) {
+  const space = await ensureUserSpace(user)
+
+  return prisma.timerSession.findFirst({
+    where: {
+      spaceId: space.id,
+      status: { in: ["running", "paused"] },
+    },
+    orderBy: { updatedAt: "desc" },
+    include: { task: true },
+  })
+}
+
+export async function startTimerForUser(user: CurrentUser, taskId?: string) {
+  const space = await ensureUserSpace(user)
+  const now = new Date()
+
+  const activeSession = await getCurrentTimerForUser(user)
+
+  if (activeSession) {
+    if (activeSession.taskId === taskId && activeSession.status === "running") {
+      return activeSession
+    }
+
+    if (activeSession.taskId === taskId && activeSession.status === "paused") {
+      return resumeTimerForUser(user, activeSession.id)
+    }
+
+    const accumulatedSec = activeSession.accumulatedSec + getElapsedSec(activeSession.startedAt, now)
+
+    await prisma.timerSession.update({
+      where: { id: activeSession.id },
+      data: {
+        status: "paused",
+        pausedAt: now,
+        startedAt: null,
+        accumulatedSec,
+      },
+    })
+  }
+
+  const session = await prisma.timerSession.create({
+    data: {
+      spaceId: space.id,
+      taskId,
+      status: "running",
+      mode: "task",
+      startedAt: now,
+      pausedAt: null,
+      accumulatedSec: 0,
+      clientSessionId: crypto.randomUUID(),
+    },
+    include: { task: true },
+  })
+
+  if (taskId) {
+    await prisma.task.updateMany({
+      where: {
+        id: taskId,
+        spaceId: space.id,
+        archivedAt: null,
+      },
+      data: {
+        status: "in_progress",
+        lastTimerStartedAt: now,
+      },
+    })
+  }
+
+  return session
+}
+
+export async function pauseTimerForUser(user: CurrentUser, sessionId?: string) {
+  const now = new Date()
+  const session = ensureSessionExists(
+    sessionId
+      ? await prisma.timerSession.findFirst({
+          where: { id: sessionId },
+          include: { task: true },
+        })
+      : await getCurrentTimerForUser(user),
+  )
+
+  if (session.status !== "running") {
+    return session
+  }
+
+  const accumulatedSec = session.accumulatedSec + getElapsedSec(session.startedAt, now)
+
+  return prisma.timerSession.update({
+    where: { id: session.id },
+    data: {
+      status: "paused",
+      pausedAt: now,
+      startedAt: null,
+      accumulatedSec,
+    },
+    include: { task: true },
+  })
+}
+
+export async function resumeTimerForUser(user: CurrentUser, sessionId?: string) {
+  const now = new Date()
+  const session = ensureSessionExists(
+    sessionId
+      ? await prisma.timerSession.findFirst({
+          where: { id: sessionId },
+          include: { task: true },
+        })
+      : await getCurrentTimerForUser(user),
+  )
+
+  if (session.status !== "paused") {
+    return session
+  }
+
+  return prisma.timerSession.update({
+    where: { id: session.id },
+    data: {
+      status: "running",
+      startedAt: now,
+      pausedAt: null,
+    },
+    include: { task: true },
+  })
+}
+
+export async function stopTimerForUser(user: CurrentUser, sessionId?: string) {
+  const space = await ensureUserSpace(user)
+  const now = new Date()
+  const session = ensureSessionExists(
+    sessionId
+      ? await prisma.timerSession.findFirst({
+          where: { id: sessionId },
+          include: { task: true },
+        })
+      : await getCurrentTimerForUser(user),
+  )
+
+  const totalDurationSec =
+    session.accumulatedSec + (session.status === "running" ? getElapsedSec(session.startedAt, now) : 0)
+
+  const startedAt = new Date(now.getTime() - totalDurationSec * 1000)
+
+  const updatedSession = await prisma.timerSession.update({
+    where: { id: session.id },
+    data: {
+      status: "completed",
+      endedAt: now,
+      pausedAt: null,
+      startedAt: null,
+      accumulatedSec: totalDurationSec,
+    },
+    include: { task: true },
+  })
+
+  if (session.taskId && totalDurationSec > 0) {
+    await prisma.$transaction([
+      prisma.timeEntry.create({
+        data: {
+          spaceId: space.id,
+          taskId: session.taskId,
+          title: session.task?.title ?? "Task Timer",
+          startedAt,
+          endedAt: now,
+          durationSec: totalDurationSec,
+          entryType: "task",
+          source: "timer",
+          isAutoGenerated: true,
+        },
+      }),
+      prisma.task.update({
+        where: { id: session.taskId },
+        data: {
+          actualMinutes: {
+            increment: Math.max(1, Math.round(totalDurationSec / 60)),
+          },
+          timeEntryCount: {
+            increment: 1,
+          },
+        },
+      }),
+    ])
+  }
+
+  return updatedSession
+}
