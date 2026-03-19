@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { ChevronRight, MoreHorizontal } from "lucide-react"
 import { TaskDetailDrawer } from "@/features/tasks/components/task-detail-drawer"
 import { TaskDetailPanel } from "@/features/tasks/components/task-detail-panel"
 
@@ -15,6 +16,12 @@ type TaskItem = {
   dueAt?: string | null
   estimatedMinutes?: number | null
   actualMinutes: number
+  list?: {
+    id: string
+    name: string
+    emoji?: string | null
+    color?: string | null
+  } | null
   taskTags?: Array<{
     tag: {
       id: string
@@ -32,6 +39,14 @@ type TasksResponse = {
   hasNextPage: boolean
 }
 
+type ListGroup = {
+  id: string
+  name: string
+  emoji?: string | null
+  color?: string | null
+  tasks: TaskItem[]
+}
+
 const statusLabelMap: Record<TaskItem["status"], string> = {
   todo: "待办",
   in_progress: "进行中",
@@ -45,6 +60,8 @@ const priorityLabelMap: Record<TaskItem["priority"], string> = {
   high: "高",
 }
 
+const TASK_LIST_COLLAPSED_STORAGE_KEY = "king-todo-task-list-collapsed"
+
 export function TasksPageClient() {
   const [items, setItems] = useState<TaskItem[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -54,11 +71,48 @@ export function TasksPageClient() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isTogglingId, setIsTogglingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [collapsedListIds, setCollapsedListIds] = useState<string[]>(() => {
+    if (typeof window === "undefined") return []
+    try {
+      const raw = window.localStorage.getItem(TASK_LIST_COLLAPSED_STORAGE_KEY)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  })
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
   const activeView = searchParams.get("view") ?? "all"
   const activeListId = searchParams.get("listId") ?? ""
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(TASK_LIST_COLLAPSED_STORAGE_KEY, JSON.stringify(collapsedListIds))
+  }, [collapsedListIds])
+
+  const groupedByList = useMemo(() => {
+    const groups = new Map<string, ListGroup>()
+    
+    for (const task of items) {
+      const listId = task.list?.id ?? "no-list"
+      
+      if (!groups.has(listId)) {
+        groups.set(listId, {
+          id: listId,
+          name: task.list?.name ?? "其他",
+          emoji: task.list?.emoji ?? "📁",
+          color: task.list?.color ?? "#6b8dff",
+          tasks: [],
+        })
+      }
+      
+      groups.get(listId)!.tasks.push(task)
+    }
+    
+    return Array.from(groups.values())
+  }, [items])
 
   const loadTasks = useCallback(async (nextQuery = query) => {
     setIsLoading(true)
@@ -179,6 +233,12 @@ export function TasksPageClient() {
     return query.trim() ? "没有匹配当前搜索条件的任务。" : "还没有任务，先创建一个。"
   }, [query])
 
+  function toggleListCollapsed(listId: string) {
+    setCollapsedListIds((current) =>
+      current.includes(listId) ? current.filter((id) => id !== listId) : [...current, listId]
+    )
+  }
+
   return (
     <>
       <div className="grid min-h-[calc(100vh-8rem)] gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -253,73 +313,80 @@ export function TasksPageClient() {
               <p className="mt-2 text-sm text-muted-foreground">{emptyText}</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {items.map((task) => {
-                const isSelected = task.id === selectedTaskId
+            <div className="space-y-4">
+              {groupedByList.map((group) => {
+                const isCollapsed = collapsedListIds.includes(group.id)
+                const hasNoList = group.id === "no-list"
 
                 return (
-                  <button
-                    key={task.id}
-                    type="button"
-                    onClick={() => setSelectedTaskId(task.id)}
-                    className={`w-full rounded-2xl border bg-card px-4 py-4 text-left shadow-card transition-all hover:bg-muted/40 ${
-                      isSelected ? "border-primary bg-primary/5 ring-2 ring-primary/15" : "border-border"
-                    }`}
-                  >
-                    <div className="flex items-start gap-4">
-                      <div
-                        className={`mt-1 h-10 w-1 rounded-full ${
-                          task.priority === "high" ? "bg-destructive" : task.priority === "medium" ? "bg-accent" : "bg-muted-foreground/40"
-                        }`}
-                      />
-                      <div className="min-w-0 flex-1 space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <h2 className="line-clamp-1 text-base font-semibold tracking-tight">{task.title}</h2>
-                          <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-medium text-secondary-foreground">
-                            {priorityLabelMap[task.priority]}
-                          </span>
-                        </div>
+                  <div key={group.id} className="space-y-2">
+                    {!hasNoList && (
+                      <button
+                        type="button"
+                        onClick={() => toggleListCollapsed(group.id)}
+                        className="group flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted/50"
+                      >
+                        <ChevronRight
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${
+                            isCollapsed ? "-rotate-90" : "rotate-90"
+                          }`}
+                        />
+                        <span className="text-lg">{group.emoji}</span>
+                        <span className="text-sm font-medium text-foreground">{group.name}</span>
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {group.tasks.filter((t) => t.status === "done").length}/{group.tasks.length}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenMenuId(openMenuId === group.id ? null : group.id)
+                          }}
+                          className="ml-1 hidden h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted group-hover:inline-flex"
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </button>
+                    )}
 
-                        <p className="line-clamp-2 text-sm text-muted-foreground">{task.description?.trim() || "暂无描述"}</p>
+                    {!isCollapsed && (
+                      <div className="space-y-2 pl-4">
+                        {group.tasks.map((task) => {
+                          const isSelected = task.id === selectedTaskId
 
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                          <span className="rounded-full bg-muted px-2.5 py-1">{statusLabelMap[task.status]}</span>
-                          <span className="rounded-full bg-muted px-2.5 py-1">预计 {task.estimatedMinutes ?? 0} 分钟</span>
-                          <span className="rounded-full bg-muted px-2.5 py-1">实际 {task.actualMinutes} 分钟</span>
-                        </div>
-
-                        {task.dueAt ? <p className="text-xs text-muted-foreground">截止：{new Date(task.dueAt).toLocaleString("zh-CN")}</p> : null}
-
-                        {task.taskTags?.length ? (
-                          <div className="flex flex-wrap gap-2">
-                            {task.taskTags.map((taskTag) => (
-                              <span key={taskTag.tag.id} className="rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent-foreground">
-                                {taskTag.tag.name}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={(event) => void handleToggleStatus(task, event)}
-                            disabled={isTogglingId === task.id}
-                            className="inline-flex h-8 items-center justify-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isTogglingId === task.id ? "处理中..." : task.status === "done" ? "恢复任务" : "完成任务"}
-                          </button>
-                          <Link
-                            href={`/tasks/${task.id}`}
-                            onClick={(event) => event.stopPropagation()}
-                            className="inline-flex h-8 items-center justify-center rounded-lg border border-border bg-background px-3 text-xs font-medium transition-colors hover:bg-muted xl:hidden"
-                          >
-                            详情页
-                          </Link>
-                        </div>
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              onClick={() => setSelectedTaskId(task.id)}
+                              className={`w-full rounded-2xl border bg-card px-4 py-3 text-left shadow-card transition-all hover:bg-muted/40 ${
+                                isSelected
+                                  ? "border-primary bg-primary/5 ring-2 ring-primary/15"
+                                  : "border-border"
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <h2 className="line-clamp-1 text-sm font-medium text-foreground">
+                                    {task.title}
+                                  </h2>
+                                </div>
+                                <div
+                                  className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${
+                                    task.priority === "high"
+                                      ? "bg-destructive"
+                                      : task.priority === "medium"
+                                        ? "bg-accent"
+                                        : "bg-muted-foreground/40"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          )
+                        })}
                       </div>
-                    </div>
-                  </button>
+                    )}
+                  </div>
                 )
               })}
             </div>
