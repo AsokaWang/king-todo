@@ -850,7 +850,7 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
       {showListModal ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/20 px-4 backdrop-blur-sm">
           <button type="button" aria-label="关闭清单弹窗" className="absolute inset-0" onClick={closeListModal} />
-          <div className="relative z-10 w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-floating">
+          <div className="relative z-10 w-full max-w-md rounded-[28px] border border-border bg-card p-6 shadow-floating">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">List</p>
@@ -859,7 +859,7 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
               <button
                 type="button"
                 onClick={closeListModal}
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-background transition-colors hover:bg-muted"
+                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-border bg-background transition-colors hover:bg-muted"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -897,7 +897,7 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
                   />
                   <input
                     autoFocus
-                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none ring-0 focus:border-primary/60"
+                    className="h-11 w-full rounded-2xl border border-input bg-background px-3 text-sm outline-none ring-0 focus:border-primary/60"
                     value={listDraftName}
                     onChange={(event) => setListDraftName(event.target.value)}
                     placeholder="例如：工作、家庭、周计划"
@@ -958,7 +958,7 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
                   <button
                     type="button"
                     onClick={() => setShowParentListPicker((current) => !current)}
-                    className="flex h-11 w-full items-center justify-between rounded-xl border border-input bg-background px-3 text-sm transition-colors hover:bg-muted/30"
+                    className="flex h-11 w-full items-center justify-between rounded-2xl border border-input bg-background px-3 text-sm transition-colors hover:bg-muted/30"
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="text-base leading-none">{listDraftParentId ? topLevelParentLists.find((item) => item.id === listDraftParentId)?.emoji ?? "📁" : "📁"}</span>
@@ -1024,14 +1024,14 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
                 <button
                   type="button"
                   onClick={closeListModal}
-                  className="inline-flex h-10 items-center justify-center rounded-xl border border-border bg-background px-4 text-sm transition-colors hover:bg-muted"
+                  className="inline-flex h-10 items-center justify-center rounded-2xl border border-border bg-background px-4 text-sm transition-colors hover:bg-muted"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={isCreating || !listDraftName.trim()}
-                  className="inline-flex h-10 items-center justify-center rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                  className="inline-flex h-10 items-center justify-center rounded-2xl bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
                 >
                   {isCreating ? (editingListId ? "保存中..." : "创建中...") : editingListId ? "保存" : "创建"}
                 </button>
@@ -1059,6 +1059,7 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
   const isRootList = depth === 0
   const isNestedItem = depth > 0
   const displayColor = item.color ?? "#6b8dff"
+  const shouldToggleOnClick = isRootList && hasChildren && (isCollapsed || isActive)
 
   const incompleteCount = item.taskCount - item.completedTaskCount
 
@@ -1086,23 +1087,23 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
         style={{ marginLeft: `${depth * 8}px` }}
       >
         <div
-        className={cn(
-          "relative flex min-w-0 flex-1 items-center rounded-lg transition-all duration-100",
-          isNestedItem
-            ? isActive
-              ? "bg-primary/5"
-              : "hover:bg-muted/35"
-            : isActive
-              ? "border border-border/50 bg-muted/70"
-              : "hover:bg-muted/55",
-          isPressAnimating ? "scale-[0.985] bg-muted/80" : "scale-100",
-          isDropTarget ? "ring-1 ring-primary/15 bg-primary/8" : "",
-        )}
-      >
+          className={cn(
+            "relative flex min-w-0 flex-1 items-center rounded-lg transition-all duration-150",
+            isNestedItem
+              ? isActive
+                ? "bg-muted/55"
+                : "hover:bg-muted/30"
+              : isActive
+                ? "border border-border/45 bg-muted/75"
+                : "hover:bg-muted/50",
+            isPressAnimating ? "scale-[0.988]" : "scale-100",
+            isDropTarget ? "ring-1 ring-primary/15 bg-primary/8" : "",
+          )}
+        >
         <Link
           href={`/tasks?view=all&listId=${item.id}`}
           onClick={() => {
-            if (isRootList && hasChildren) {
+            if (shouldToggleOnClick) {
               setIsPressAnimating(true)
               window.setTimeout(() => setIsPressAnimating(false), 170)
               onToggleCollapsed(item.id)
@@ -1112,8 +1113,8 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
             "relative flex min-w-0 flex-1 items-center justify-between text-sm transition-colors",
             isNestedItem
               ? isActive
-                ? "h-[30px] rounded-lg text-foreground"
-                : "h-[30px] rounded-lg text-muted-foreground/90 hover:text-foreground"
+                ? "h-8 rounded-lg text-foreground"
+                : "h-8 rounded-lg text-muted-foreground/90 hover:text-foreground"
               : isActive
                 ? "h-9 rounded-lg px-3 font-medium text-foreground"
                 : "h-9 rounded-lg px-3 text-muted-foreground hover:text-foreground",
@@ -1126,14 +1127,14 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
                 <span
                   className={cn(
                     "shrink-0 rounded-full",
-                    isNestedItem ? "h-1.5 w-1.5" : "h-2 w-2",
+                    isNestedItem ? "h-1.5 w-1.5 opacity-80" : "h-1.5 w-1.5 opacity-85",
                   )}
                   style={{ backgroundColor: displayColor }}
                 />
                 <span
                   className={cn(
                     "flex shrink-0 items-center justify-center leading-none",
-                    isNestedItem ? "h-4 w-4 text-[13px] opacity-70" : "h-5 w-5 text-[15px]",
+                    isNestedItem ? "h-4 w-4 text-[13px] opacity-70" : "h-5 w-5 text-[14px] opacity-80",
                   )}
                 >
                   {item.emoji ?? "📁"}
@@ -1141,14 +1142,14 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
               </>
             ) : (
               <>
-                <span className="relative flex shrink-0 items-center gap-1.5 pl-2.5 before:absolute before:left-[3px] before:top-1/2 before:h-px before:w-[7px] before:-translate-y-1/2 before:bg-border/35">
+                <span className="relative flex shrink-0 items-center gap-1.5 pl-2.5 before:absolute before:left-[3px] before:top-1/2 before:h-px before:w-2 before:-translate-y-1/2 before:bg-border/30">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: displayColor }} />
                   <span className="text-[13px] leading-none opacity-65">{item.emoji ?? "📄"}</span>
                 </span>
                 <span className="truncate text-[13px] font-normal">{item.name}</span>
               </>
             )}
-            {isParentGroup && <span className={cn("truncate tracking-tight", isNestedItem ? "text-[13px] font-normal" : "text-[13px] font-medium")}>{item.name}</span>}
+            {isParentGroup && <span className={cn("truncate tracking-tight", isNestedItem ? "text-[13px] font-normal text-foreground/88" : "text-[13px] font-medium text-foreground/92")}>{item.name}</span>}
           </div>
           <div className="flex min-w-6 items-center justify-end gap-1.5">
             {incompleteCount > 0 && (
@@ -1160,7 +1161,7 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
                       ? "text-[11px] text-foreground/65"
                       : "text-[11px] text-muted-foreground/75"
                     : isActive
-                      ? "text-[11px] text-foreground/70"
+                      ? "text-[11px] text-foreground/68"
                       : "text-[11px] text-muted-foreground/75",
                 )}
               >
@@ -1175,12 +1176,12 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
             type="button"
             onClick={() => onToggleMenu(openListMenuId === item.id ? null : item.id)}
             className={cn(
-              "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all duration-100 ease-out hover:bg-background/80 hover:text-foreground active:scale-[0.98]",
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all duration-150 ease-out hover:bg-background/80 hover:text-foreground active:scale-[0.98]",
               openListMenuId === item.id
-                ? "bg-background/85 opacity-100 text-foreground"
+                ? "bg-background/80 opacity-100 text-foreground"
                 : isActive
-                  ? "opacity-80 hover:opacity-100"
-                  : "opacity-0 group-hover:opacity-85",
+                  ? "opacity-65 hover:opacity-100"
+                  : "opacity-0 group-hover:opacity-70",
             )}
             aria-label="清单菜单"
           >
@@ -1233,16 +1234,16 @@ function ListTreeItem({ item, depth, isDarkMode, activeListId, collapsedListIds,
       {hasChildren ? (
         <div
           className={cn(
-            "overflow-hidden transition-[max-height,opacity,transform] will-change-[max-height,opacity,transform]",
+            "overflow-hidden transition-[max-height,opacity] will-change-[max-height,opacity]",
             depth === 0 ? "duration-200" : "duration-150",
-            isCollapsed ? "pointer-events-none -translate-y-1 opacity-0" : "translate-y-0 opacity-100",
+            isCollapsed ? "pointer-events-none opacity-0" : "opacity-100",
           )}
           style={{
             maxHeight: isCollapsed ? "0px" : "1600px",
             transitionTimingFunction: isCollapsed ? "cubic-bezier(0.4, 0, 1, 1)" : "cubic-bezier(0.22, 1, 0.36, 1)",
           }}
         >
-        <div className={cn("relative", depth === 0 ? "ml-2 mt-0.5 pl-2 before:absolute before:bottom-2 before:left-[19px] before:top-1.5 before:w-px before:-translate-x-1/2 before:bg-border/30" : "ml-2 pl-2 before:absolute before:bottom-2 before:left-[19px] before:top-1.5 before:w-px before:-translate-x-1/2 before:bg-border/30")}>
+          <div className={cn("relative", depth === 0 ? "ml-2 mt-0.5 pl-2 before:absolute before:bottom-2 before:left-[11px] before:top-1.5 before:w-px before:-translate-x-1/2 before:bg-border/30" : "ml-2 pl-2 before:absolute before:bottom-2 before:left-[11px] before:top-1.5 before:w-px before:-translate-x-1/2 before:bg-border/30")}>
             {item.children.map((child) => (
               <ListTreeItem
                 key={child.id}
