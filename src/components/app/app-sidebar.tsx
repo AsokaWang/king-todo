@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Bot, Calendar, CalendarCheck, CalendarDays, CalendarRange, Check, ChevronRight, FolderPlus, Grid2x2, Lightbulb, List, ListTodo, MoreHorizontal, Palette, Plus, Search, Settings, Settings2, Shield, Sparkles, Sun, User, X } from "lucide-react"
 import { SignOutButton } from "@/components/auth/sign-out-button"
 import { TaskSearchModal } from "@/components/app/task-search-modal"
+import { DropdownSelect } from "@/components/ui/dropdown-select"
 import { emojiCategoryLabels, emojiCategoryOrder, emojiSeedsByCategory, type EmojiCategoryKey, type EmojiSeedItem } from "@/data/emojis"
 import { cn } from "@/lib/utils/cn"
 
@@ -954,70 +955,29 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
 
               <label className="block space-y-2">
                 <span className="text-sm font-medium">上级清单</span>
-                <div className="relative" ref={parentSelectRef}>
-                  <button
-                    type="button"
-                    onClick={() => setShowParentListPicker((current) => !current)}
-                    className="flex h-11 w-full items-center justify-between rounded-2xl border border-input bg-background px-3 text-sm transition-colors hover:bg-muted/30"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="text-base leading-none">{listDraftParentId ? topLevelParentLists.find((item) => item.id === listDraftParentId)?.emoji ?? "📁" : "📁"}</span>
-                      <span className={cn("truncate", listDraftParentId ? "text-foreground" : "text-muted-foreground")}>
-                        {listDraftParentId ? topLevelParentLists.find((item) => item.id === listDraftParentId)?.name ?? "无上级（顶层）" : "无上级（顶层）"}
-                      </span>
-                    </span>
-                    <ChevronRight className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200", showParentListPicker ? "-rotate-90" : "rotate-90")} />
-                  </button>
+                <DropdownSelect
+                  items={[
+                    { value: "__root__", label: "无上级（顶层）", icon: "📁" },
+                    ...topLevelParentLists.map((list) => ({
+                      value: list.id,
+                      label: list.name,
+                      icon: list.emoji ?? "📁",
+                    })),
+                  ]}
+                  value={listDraftParentId ?? "__root__"}
+                  placeholder="无上级（顶层）"
+                  onChange={(value) => {
+                    if (value === "__root__") {
+                      setListDraftParentId(null)
+                      setListDraftParentName(null)
+                      return
+                    }
 
-                  {showParentListPicker ? (
-                    <div className="absolute left-0 top-[calc(100%+6px)] z-20 w-full rounded-2xl border border-border/70 bg-card/95 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-md">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setListDraftParentId(null)
-                          setListDraftParentName(null)
-                          setShowParentListPicker(false)
-                        }}
-                        className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-muted/55",
-                          !listDraftParentId ? "bg-primary/10 text-foreground" : "text-muted-foreground",
-                        )}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span>📁</span>
-                          <span>无上级（顶层）</span>
-                        </span>
-                        {!listDraftParentId ? <Check className="h-4 w-4" /> : null}
-                      </button>
-
-                      {topLevelParentLists.length ? <div className="my-1 h-px bg-border/60" /> : null}
-
-                      <div className="max-h-56 overflow-y-auto pr-1">
-                        {topLevelParentLists.map((list) => (
-                          <button
-                            key={list.id}
-                            type="button"
-                            onClick={() => {
-                              setListDraftParentId(list.id)
-                              setListDraftParentName(list.name)
-                              setShowParentListPicker(false)
-                            }}
-                            className={cn(
-                              "flex h-10 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-muted/55",
-                              listDraftParentId === list.id ? "bg-primary/10 text-foreground" : "text-foreground/85",
-                            )}
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span>{list.emoji ?? "📁"}</span>
-                              <span className="truncate">{list.name}</span>
-                            </span>
-                            {listDraftParentId === list.id ? <Check className="h-4 w-4 shrink-0" /> : null}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                    const nextParent = topLevelParentLists.find((item) => item.id === value)
+                    setListDraftParentId(value)
+                    setListDraftParentName(nextParent?.name ?? null)
+                  }}
+                />
               </label>
 
               <div className="flex items-center justify-end gap-3">

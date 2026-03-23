@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { Save } from "lucide-react"
+import { DropdownSelect } from "@/components/ui/dropdown-select"
 import { defaultAiConfig, loadAiConfig, saveAiConfig, type AiConfig, type AiProvider } from "@/lib/ai-config"
 
 const providerModels: Record<AiProvider, string[]> = {
@@ -42,22 +43,27 @@ export function AiModelSettings() {
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
             <span className="text-sm font-medium">服务商</span>
-            <select className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm" value={config.provider} onChange={(event) => handleProviderChange(event.target.value as AiProvider)}>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="custom">Custom</option>
-            </select>
+            <DropdownSelect
+              items={[
+                { value: "openai", label: "OpenAI" },
+                { value: "anthropic", label: "Anthropic" },
+                { value: "custom", label: "Custom" },
+              ]}
+              value={config.provider}
+              placeholder="选择服务商"
+              onChange={(value) => handleProviderChange(value as AiProvider)}
+            />
           </label>
 
           <label className="space-y-2">
             <span className="text-sm font-medium">模型</span>
-            <select className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm" value={config.model} onChange={(event) => updateConfig("model", event.target.value)}>
-              {modelOptions.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
+            <DropdownSelect
+              items={modelOptions.map((model) => ({ value: model, label: model }))}
+              value={config.model}
+              placeholder="选择模型"
+              onChange={(value) => updateConfig("model", value)}
+              searchable
+            />
           </label>
 
           <label className="space-y-2 md:col-span-2">
