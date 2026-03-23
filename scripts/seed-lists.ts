@@ -23,20 +23,22 @@ async function main() {
   ]
 
   for (const listData of lists) {
-    await prisma.list.upsert({
+    const existing = await prisma.list.findFirst({
       where: {
-        spaceId_name: {
-          spaceId,
-          name: listData.name
-        }
-      },
-      update: {},
-      create: {
-        ...listData,
         spaceId,
-        sortOrder: 0
+        name: listData.name,
       }
     })
+
+    if (!existing) {
+      await prisma.list.create({
+        data: {
+          ...listData,
+          spaceId,
+          sortOrder: 0
+        }
+      })
+    }
   }
 
   // 获取创建的清单

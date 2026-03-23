@@ -170,7 +170,7 @@ model List {
   id         String        @id @default(cuid())
   spaceId    String
   parentId   String?
-  emoji      String?       @default("📁")
+  emoji      String?       @default("📁") @db.VarChar(32)
   name       String
   color      String?
   sortOrder  Int           @default(0)
@@ -203,11 +203,13 @@ model Task {
   id                String          @id @default(cuid())
   spaceId           String
   listId            String?
+  parentTaskId      String?
   title             String
   description       String?
   status            TaskStatus      @default(todo)
   priority          TaskPriority    @default(medium)
   source            TaskSource      @default(manual)
+  sortOrder         Int             @default(0)
   startAt           DateTime?
   dueAt             DateTime?
   completedAt       DateTime?
@@ -218,6 +220,8 @@ model Task {
   archivedAt        DateTime?
   space             PersonalSpace   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   list              List?           @relation(fields: [listId], references: [id], onDelete: SetNull)
+  parentTask        Task?           @relation("TaskSubtasks", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks          Task[]          @relation("TaskSubtasks")
   taskTags          TaskTag[]
   reminders         Reminder[]
   recurrenceRule    RecurrenceRule?
@@ -230,6 +234,8 @@ model Task {
   @@index([spaceId, dueAt])
   @@index([spaceId, startAt])
   @@index([spaceId, listId, updatedAt])
+  @@index([spaceId, listId, sortOrder])
+  @@index([spaceId, parentTaskId, sortOrder])
 }
 
 model TaskTag {

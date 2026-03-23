@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client"
 import { prisma } from "@/server/db/client"
 import { ensureUserSpace } from "@/server/db/bootstrap"
-import type { CreateTaskBody, ListTasksQuery, UpdateTaskBody } from "@/features/tasks/server/task.schema"
+import type { CreateTaskBody, ListTasksQuery, ReorderTasksBody, UpdateTaskBody } from "@/features/tasks/server/task.schema"
 import { HttpError } from "@/server/errors/http"
 
 type CurrentUser = {
@@ -117,13 +117,17 @@ export async function listTasks(user: CurrentUser, input: ListTasksQuery) {
     ...(input.status ? { status: input.status } : {}),
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.listId ? { listId: input.listId } : {}),
+    parentTaskId: null,
   }
 
   const [total, items] = await Promise.all([
     prisma.task.count({ where }),
     prisma.task.findMany({
       where,
-      orderBy: { [input.sortBy]: input.sortOrder },
+      orderBy:
+        input.sortBy === "sortOrder"
+          ? [{ sortOrder: "asc" }, { updatedAt: "desc" }]
+          : { [input.sortBy]: input.sortOrder },
       skip: (input.page - 1) * input.pageSize,
       take: input.pageSize,
       include: {
@@ -149,32 +153,99 @@ export async function listTasks(user: CurrentUser, input: ListTasksQuery) {
 export async function createTaskForUser(user: CurrentUser, input: CreateTaskBody) {
   const space = await ensureUserSpace(user)
 
-  const task = await prisma.task.create({
-    data: {
-      spaceId: space.id,
-      title: input.title,
-      description: input.description,
-      listId: input.listId,
-      priority: input.priority,
-      startAt: input.startAt ? new Date(input.startAt) : undefined,
-      dueAt: input.dueAt ? new Date(input.dueAt) : undefined,
-      estimatedMinutes: input.estimatedMinutes,
-      taskTags:
-        input.tagIds.length > 0
-          ? {
-              create: input.tagIds.map((tagId) => ({
-                tagId,
-              })),
-            }
-          : undefined,
-    },
-    include: {
-      taskTags: {
-        include: {
-          tag: true,
+  if (input.parentTaskId) {
+    const parentTask = await prisma.task.findFirst({
+      where: {
+        id: input.parentTaskId,
+        spaceId: space.id,
+        archivedAt: null,
+      },
+      select: {
+        id: true,
+        listId: true,
+      },
+    })
+
+    if (!parentTask) {
+      throw new HttpError(400, "INVALID_PARENT_TASK", "所选父任务无效。")
+    }
+
+    if (!input.listId) {
+      input.listId = parentTask.listId ?? undefined
+    }
+  }
+
+  const namedTagIds = input.tagNames.length
+    ? await Promise.all(
+        Array.from(new Set(input.tagNames.map((item) => item.trim()).filter(Boolean))).map(async (name) => {
+          const tag = await prisma.tag.upsert({
+            where: {
+              spaceId_name: {
+                spaceId: space.id,
+                name,
+              },
+            },
+            update: {},
+            create: {
+              spaceId: space.id,
+              name,
+            },
+          })
+
+          return tag.id
+        }),
+      )
+    : []
+
+  const tagIds = Array.from(new Set([...input.tagIds, ...namedTagIds]))
+
+  const task = await prisma.$transaction(async (tx) => {
+    await tx.task.updateMany({
+      where: {
+        spaceId: space.id,
+        archivedAt: null,
+        listId: input.listId ?? null,
+      },
+      data: {
+        sortOrder: {
+          increment: 1,
         },
       },
-    },
+    })
+
+    return tx.task.create({
+      data: {
+        spaceId: space.id,
+        title: input.title,
+        description: input.description,
+        listId: input.listId,
+        parentTaskId: input.parentTaskId,
+        priority: input.priority,
+        sortOrder: 0,
+        startAt: input.startAt ? new Date(input.startAt) : undefined,
+        dueAt: input.dueAt ? new Date(input.dueAt) : undefined,
+        estimatedMinutes: input.estimatedMinutes,
+        taskTags:
+          tagIds.length > 0
+            ? {
+                create: tagIds.map((tagId) => ({
+                  tagId,
+                })),
+              }
+            : undefined,
+      },
+      include: {
+        subtasks: {
+          where: { archivedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        },
+        taskTags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
+    })
   })
 
   return task
@@ -197,6 +268,17 @@ export async function getTaskByIdForUser(user: CurrentUser, taskId: string) {
       },
       reminders: true,
       recurrenceRule: true,
+      subtasks: {
+        where: { archivedAt: null },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        include: {
+          taskTags: {
+            include: {
+              tag: true,
+            },
+          },
+        },
+      },
       timeEntries: {
         orderBy: {
           startedAt: "desc",
@@ -226,6 +308,48 @@ export async function updateTaskForUser(user: CurrentUser, taskId: string, input
 
   if (!existing) {
     throw new HttpError(404, "NOT_FOUND", "Task not found.")
+  }
+
+  if (input.parentTaskId === taskId) {
+    throw new HttpError(400, "INVALID_PARENT_TASK", "任务不能设置自己为父任务。")
+  }
+
+  if (input.pinToTop) {
+    await prisma.$transaction(async (tx) => {
+      await tx.task.updateMany({
+        where: {
+          spaceId: space.id,
+          archivedAt: null,
+          listId: existing.listId,
+          parentTaskId: existing.parentTaskId,
+          id: { not: taskId },
+        },
+        data: {
+          sortOrder: {
+            increment: 1,
+          },
+        },
+      })
+
+      await tx.task.update({
+        where: { id: taskId },
+        data: { sortOrder: 0 },
+      })
+    })
+
+    return getTaskByIdForUser(user, taskId)
+  }
+
+  if (input.archive) {
+    await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status: "archived",
+        archivedAt: new Date(),
+      },
+    })
+
+    return { ...existing, status: "archived", archivedAt: new Date() }
   }
 
   const tagIds = input.tagNames
@@ -258,6 +382,8 @@ export async function updateTaskForUser(user: CurrentUser, taskId: string, input
       status: input.status,
       priority: input.priority,
       listId: input.listId === null ? null : input.listId,
+      parentTaskId: input.parentTaskId === null ? null : input.parentTaskId,
+      sortOrder: input.sortOrder,
       startAt: input.startAt === null ? null : input.startAt ? new Date(input.startAt) : undefined,
       dueAt: input.dueAt === null ? null : input.dueAt ? new Date(input.dueAt) : undefined,
       estimatedMinutes:
@@ -313,4 +439,53 @@ export async function updateTaskForUser(user: CurrentUser, taskId: string, input
   }
 
   return getTaskByIdForUser(user, updatedTask.id)
+}
+
+export async function deleteTaskForUser(user: CurrentUser, taskId: string) {
+  const space = await ensureUserSpace(user)
+
+  const existing = await prisma.task.findFirst({
+    where: {
+      id: taskId,
+      spaceId: space.id,
+      archivedAt: null,
+    },
+    select: { id: true },
+  })
+
+  if (!existing) {
+    throw new HttpError(404, "NOT_FOUND", "Task not found.")
+  }
+
+  await prisma.task.delete({ where: { id: taskId } })
+  return { id: taskId, deleted: true }
+}
+
+export async function reorderTasksForUser(user: CurrentUser, input: ReorderTasksBody) {
+  const space = await ensureUserSpace(user)
+
+  const tasks = await prisma.task.findMany({
+    where: {
+      spaceId: space.id,
+      archivedAt: null,
+      id: { in: input.orderedTaskIds },
+      listId: input.listId ?? null,
+    },
+    select: { id: true },
+  })
+
+  if (tasks.length !== input.orderedTaskIds.length) {
+    throw new HttpError(400, "INVALID_ORDER", "Ordered task ids are invalid.")
+  }
+
+  await prisma.$transaction(
+    input.orderedTaskIds.map((taskId, index) =>
+      prisma.task.update({
+        where: { id: taskId },
+        data: { sortOrder: index },
+      }),
+    ),
+  )
+
+  return { updated: input.orderedTaskIds.length }
 }

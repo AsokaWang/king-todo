@@ -11,7 +11,7 @@ export const listTasksQuerySchema = z.object({
   view: z.enum(["all", "today", "tomorrow", "week", "month"]).default("all"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  sortBy: z.enum(["updatedAt", "dueAt", "createdAt"]).default("updatedAt"),
+  sortBy: z.enum(["sortOrder", "updatedAt", "dueAt", "createdAt"]).default("sortOrder"),
   sortOrder: z.enum(["asc", "desc"]).default("desc"),
 })
 
@@ -19,10 +19,12 @@ export const createTaskBodySchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000).optional(),
   listId: z.string().trim().optional(),
+  parentTaskId: z.string().trim().optional(),
   priority: taskPrioritySchema.optional(),
   startAt: z.string().datetime().optional(),
   dueAt: z.string().datetime().optional(),
   tagIds: z.array(z.string().trim()).default([]),
+  tagNames: z.array(z.string().trim().min(1)).default([]),
   estimatedMinutes: z.number().int().min(0).max(24 * 60).optional(),
 })
 
@@ -37,12 +39,16 @@ export const updateTaskBodySchema = z
     status: taskStatusSchema.optional(),
     priority: taskPrioritySchema.optional(),
     listId: z.string().trim().nullable().optional(),
+    parentTaskId: z.string().trim().nullable().optional(),
     startAt: z.string().datetime().nullable().optional(),
     dueAt: z.string().datetime().nullable().optional(),
     estimatedMinutes: z.number().int().min(0).max(24 * 60).nullable().optional(),
     tagNames: z.array(z.string().trim().min(1)).optional(),
     reminderAt: z.string().datetime().nullable().optional(),
     recurrenceRule: z.string().trim().nullable().optional(),
+    sortOrder: z.number().int().min(0).optional(),
+    pinToTop: z.boolean().optional(),
+    archive: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "At least one field is required.",
@@ -51,3 +57,10 @@ export const updateTaskBodySchema = z
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>
 export type CreateTaskBody = z.infer<typeof createTaskBodySchema>
 export type UpdateTaskBody = z.infer<typeof updateTaskBodySchema>
+
+export const reorderTasksBodySchema = z.object({
+  orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
+  listId: z.string().trim().nullable().optional(),
+})
+
+export type ReorderTasksBody = z.infer<typeof reorderTasksBodySchema>
