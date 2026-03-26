@@ -1,38 +1,19 @@
 "use client"
 
-import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Eye, FilePenLine, Pin, Play, Plus, Trash2, XCircle } from "lucide-react"
-import { DropdownSelect } from "@/components/ui/dropdown-select"
+import {
+  TaskDescriptionSection,
+  TaskDetailFooter,
+  TaskDetailHeader,
+  TaskMetaSection,
+  TaskStructureGuidanceSection,
+  TaskSubtasksSection,
+  TaskTagsSection,
+  TaskTimeEntriesSection,
+} from "@/features/tasks/components/task-detail-sections"
+import type { SubtaskView, TaskDetailView, TaskPriority, TaskStatus } from "@/features/tasks/contracts"
 
-type TaskStatus = "todo" | "in_progress" | "done" | "archived"
-type TaskPriority = "low" | "medium" | "high"
-
-type TaskTag = { tag: { id: string; name: string; color?: string | null } }
-type TimeEntry = { id: string; title: string; startedAt: string; endedAt: string; durationSec: number }
-type Subtask = {
-  id: string
-  title: string
-  status: TaskStatus
-  taskTags?: TaskTag[]
-}
-
-export type TaskDetailData = {
-  id: string
-  title: string
-  description?: string | null
-  status: TaskStatus
-  priority: TaskPriority
-  dueAt?: string | null
-  startAt?: string | null
-  estimatedMinutes?: number | null
-  actualMinutes: number
-  taskTags?: TaskTag[]
-  reminders?: Array<{ id: string; triggerAt: string }>
-  recurrenceRule?: { id: string; rrule: string } | null
-  subtasks?: Subtask[]
-  timeEntries?: TimeEntry[]
-}
+type TaskDetailData = TaskDetailView
 
 type Props = {
   taskId: string | null
@@ -40,19 +21,6 @@ type Props = {
   onClose?: () => void
   mobile?: boolean
 }
-
-const statusOptions = [
-  { value: "todo", label: "待办" },
-  { value: "in_progress", label: "进行中" },
-  { value: "done", label: "已完成" },
-  { value: "archived", label: "已归档" },
-] as const
-
-const priorityOptions = [
-  { value: "high", label: "高优先级" },
-  { value: "medium", label: "中优先级" },
-  { value: "low", label: "低优先级" },
-] as const
 
 function escapeHtml(input: string) {
   return input
@@ -87,12 +55,20 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
   const [status, setStatus] = useState<TaskStatus>("todo")
   const [priority, setPriority] = useState<TaskPriority>("medium")
   const [estimatedMinutes, setEstimatedMinutes] = useState("")
+  const [startAt, setStartAt] = useState("")
+  const [dueAt, setDueAt] = useState("")
+  const [listId, setListId] = useState("")
+  const [parentTaskId, setParentTaskId] = useState("")
+  const [availableLists, setAvailableLists] = useState<Array<{ value: string; label: string }>>([])
+  const [availableParentTasks, setAvailableParentTasks] = useState<Array<{ value: string; label: string }>>([])
   const [tagNames, setTagNames] = useState<string[]>([])
   const [tagInput, setTagInput] = useState("")
   const [reminderAt, setReminderAt] = useState("")
   const [recurrenceRule, setRecurrenceRule] = useState("")
   const [subtaskDraft, setSubtaskDraft] = useState("")
+  const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null)
   const [descriptionMode, setDescriptionMode] = useState<"edit" | "preview">("edit")
+  const [descriptionDirty, setDescriptionDirty] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isStartingTimer, setIsStartingTimer] = useState(false)
@@ -106,35 +82,67 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
     setTask(data)
     setTitle(data.title)
     setDescription(data.description ?? "")
+    setDescriptionDirty(false)
     setStatus(data.status)
     setPriority(data.priority)
     setEstimatedMinutes(data.estimatedMinutes?.toString() ?? "")
+    setStartAt(data.startAt ? new Date(data.startAt).toISOString().slice(0, 16) : "")
+    setDueAt(data.dueAt ? new Date(data.dueAt).toISOString().slice(0, 16) : "")
+    setListId(data.list?.id ?? "")
+    setParentTaskId(data.parentTask?.id ?? "")
     setTagNames(data.taskTags?.map((item) => item.tag.name) ?? [])
     setReminderAt(data.reminders?.[0]?.triggerAt ? data.reminders[0].triggerAt.slice(0, 16) : "")
     setRecurrenceRule(data.recurrenceRule?.rrule ?? "")
   }, [])
 
   useEffect(() => {
+    let isActive = true
+
+    async function loadMetaOptions() {
+      try {
+        const [listsResponse, tasksResponse] = await Promise.all([
+          fetch("/api/lists", { credentials: "include", cache: "no-store" }),
+          fetch("/api/tasks?view=all&pageSize=100", { credentials: "include", cache: "no-store" }),
+        ])
+        const [listsPayload, tasksPayload] = await Promise.all([listsResponse.json(), tasksResponse.json()])
+        if (!isActive) return
+        if (listsResponse.ok && listsPayload.ok) {
+          const flatten = (items: Array<{ id: string; name: string; children?: unknown[] }>, depth = 0): Array<{ value: string; label: string }> =>
+            items.flatMap((item) => [
+              { value: item.id, label: `${"— ".repeat(depth)}${item.name}` },
+              ...flatten((item.children as Array<{ id: string; name: string; children?: unknown[] }>) ?? [], depth + 1),
+            ])
+          setAvailableLists(flatten(listsPayload.data.items ?? []))
+        }
+        if (tasksResponse.ok && tasksPayload.ok) {
+          const items = (tasksPayload.data.items ?? []) as Array<{ id: string; title: string }>
+          setAvailableParentTasks(items.filter((item) => item.id !== taskId).map((item) => ({ value: item.id, label: item.title })))
+        }
+      } catch {
+      }
+    }
+
+    void loadMetaOptions()
+
     if (!taskId) {
       setTask(null)
       setError(null)
       return
     }
-    let active = true
     async function load() {
       setIsLoading(true)
       setError(null)
       try {
-        if (active && taskId) await loadTaskDetail(taskId)
+        if (isActive && taskId) await loadTaskDetail(taskId)
       } catch (nextError) {
-        if (active) setError(nextError instanceof Error ? nextError.message : "Failed to load task detail.")
+        if (isActive) setError(nextError instanceof Error ? nextError.message : "Failed to load task detail.")
       } finally {
-        if (active) setIsLoading(false)
+        if (isActive) setIsLoading(false)
       }
     }
     void load()
     return () => {
-      active = false
+      isActive = false
     }
   }, [loadTaskDetail, taskId])
 
@@ -155,7 +163,11 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
             description: description.trim() ? description.trim() : null,
             status,
             priority,
+            startAt: startAt ? new Date(startAt).toISOString() : null,
+            dueAt: dueAt ? new Date(dueAt).toISOString() : null,
             estimatedMinutes: estimatedMinutes.trim() ? Number(estimatedMinutes) : null,
+            listId: listId || null,
+            parentTaskId: parentTaskId || null,
             tagNames,
             reminderAt: reminderAt ? new Date(reminderAt).toISOString() : null,
             recurrenceRule: recurrenceRule.trim() ? recurrenceRule.trim() : null,
@@ -191,7 +203,7 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
     await onUpdated()
   }
 
-  async function toggleSubtask(subtask: Subtask) {
+  async function toggleSubtask(subtask: SubtaskView) {
     const nextStatus = subtask.status === "done" ? "todo" : "done"
     const response = await fetch(`/api/tasks/${subtask.id}`, {
       method: "PATCH",
@@ -205,6 +217,29 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
       return
     }
     if (task) await loadTaskDetail(task.id)
+  }
+
+  async function reorderSubtask(targetSubtaskId: string) {
+    if (!task || !draggingSubtaskId || draggingSubtaskId === targetSubtaskId) return
+    const subtasks = [...(task.subtasks ?? [])]
+    const dragIndex = subtasks.findIndex((item) => item.id === draggingSubtaskId)
+    const dropIndex = subtasks.findIndex((item) => item.id === targetSubtaskId)
+    if (dragIndex === -1 || dropIndex === -1) return
+    const [moved] = subtasks.splice(dragIndex, 1)
+    subtasks.splice(dropIndex, 0, moved)
+    await Promise.all(
+      subtasks.map((item, index) =>
+        fetch(`/api/tasks/${item.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ sortOrder: index }),
+        }),
+      ),
+    )
+    setDraggingSubtaskId(null)
+    await loadTaskDetail(task.id)
+    await onUpdated()
   }
 
   function commitTag() {
@@ -251,7 +286,7 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
 
   if (!taskId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-background px-6 text-center">
+      <div className="flex h-full min-h-0 flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-background px-6 text-center">
         <p className="text-sm font-medium text-foreground">选择一个任务</p>
         <p className="mt-2 text-sm text-muted-foreground">右侧显示滴答清单风格的任务详情。</p>
       </div>
@@ -260,7 +295,7 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
 
   if (isLoading || !task) {
     return (
-      <div className="space-y-4 p-5">
+      <div className="h-full min-h-0 space-y-4 p-5">
         <div className="h-6 w-1/2 animate-pulse rounded bg-muted" />
         <div className="h-24 animate-pulse rounded bg-muted" />
         <div className="h-24 animate-pulse rounded bg-muted" />
@@ -269,130 +304,125 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="sticky top-0 z-10 border-b border-border/70 bg-card/95 px-5 py-4 backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Task Detail</p>
-            <div className="flex items-center gap-2">
-              <DropdownSelect
-                items={statusOptions.map((item) => ({ value: item.value, label: item.label }))}
-                value={status}
-                placeholder="状态"
-                onChange={(value) => setStatus(value as TaskStatus)}
-                className="w-32"
-              />
-              <DropdownSelect
-                items={priorityOptions.map((item) => ({ value: item.value, label: item.label }))}
-                value={priority}
-                placeholder="优先级"
-                onChange={(value) => setPriority(value as TaskPriority)}
-                className="w-32"
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => void handleStartTimer()} disabled={isStartingTimer} className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-sm hover:bg-muted disabled:opacity-50">
-              <Play className="mr-1 h-4 w-4" />{isStartingTimer ? "启动中" : "计时"}
-            </button>
-            {mobile && onClose ? <button type="button" onClick={onClose} className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-sm hover:bg-muted">关闭</button> : null}
-          </div>
-        </div>
-      </div>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <TaskDetailHeader
+        status={status}
+        priority={priority}
+        isStartingTimer={isStartingTimer}
+        mobile={mobile}
+        onStatusChange={(value) => {
+          setStatus(value)
+          void save({ status: value })
+        }}
+        onPriorityChange={(value) => {
+          setPriority(value)
+          void save({ priority: value })
+        }}
+        onStartTimer={() => void handleStartTimer()}
+        onClose={onClose}
+      />
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        <div className="space-y-5">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="space-y-5 px-5 py-4 pb-5">
           {error ? <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
 
-          <section className="space-y-3">
-            <input value={title} onChange={(event) => setTitle(event.target.value)} className="w-full bg-transparent text-xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground" placeholder="任务标题" />
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input type="datetime-local" value={reminderAt} onChange={(event) => setReminderAt(event.target.value)} className="h-10 rounded-xl border border-input bg-background px-3 text-sm" />
-              <input type="datetime-local" value={task.dueAt ? new Date(task.dueAt).toISOString().slice(0,16) : ""} readOnly className="h-10 rounded-xl border border-input bg-muted/40 px-3 text-sm text-muted-foreground" />
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full bg-muted px-2.5 py-1">实际 {task.actualMinutes} 分钟</span>
-              <span className="rounded-full bg-muted px-2.5 py-1">预计 {estimatedMinutes || 0} 分钟</span>
-            </div>
-          </section>
+          <TaskMetaSection
+            task={task}
+            title={title}
+            estimatedMinutes={estimatedMinutes}
+            reminderAt={reminderAt}
+            startAt={startAt}
+            dueAt={dueAt}
+            listId={listId}
+            parentTaskId={parentTaskId}
+            availableLists={availableLists}
+            availableParentTasks={availableParentTasks}
+            onTitleChange={setTitle}
+            onTitleBlur={() => {
+              if (task && title.trim() && title.trim() !== task.title) {
+                void save({ title: title.trim() })
+              }
+            }}
+            onEstimatedMinutesChange={(value) => {
+              setEstimatedMinutes(value)
+              void save({ estimatedMinutes: value.trim() ? Number(value) : null })
+            }}
+            onReminderAtChange={(value) => {
+              setReminderAt(value)
+              void save({ reminderAt: value ? new Date(value).toISOString() : null })
+            }}
+            onStartAtChange={(value) => {
+              setStartAt(value)
+              void save({ startAt: value ? new Date(value).toISOString() : null })
+            }}
+            onDueAtChange={(value) => {
+              setDueAt(value)
+              void save({ dueAt: value ? new Date(value).toISOString() : null })
+            }}
+            onListIdChange={(value) => {
+              setListId(value)
+              void save({ listId: value || null })
+            }}
+            onParentTaskIdChange={(value) => {
+              setParentTaskId(value)
+              void save({ parentTaskId: value || null })
+            }}
+          />
 
-          <section className="space-y-2 border-t border-border/60 pt-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Task details</h3>
-              <div className="inline-flex rounded-lg border border-border bg-muted/50 p-0.5">
-                <button type="button" onClick={() => setDescriptionMode("edit")} className={`inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs ${descriptionMode === "edit" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}><FilePenLine className="h-3.5 w-3.5" />编辑</button>
-                <button type="button" onClick={() => setDescriptionMode("preview")} className={`inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs ${descriptionMode === "preview" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}><Eye className="h-3.5 w-3.5" />预览</button>
-              </div>
-            </div>
-            {descriptionMode === "edit" ? (
-              <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-[180px] w-full resize-none rounded-xl border border-input bg-muted/30 px-4 py-3 text-sm outline-none focus:border-border/80 focus:bg-background" placeholder="支持 Markdown 输入..." />
-            ) : (
-              <div className="prose prose-sm max-w-none rounded-xl border border-input bg-muted/20 px-4 py-3 dark:prose-invert" dangerouslySetInnerHTML={{ __html: markdownHtml || "<p>Nothing here yet</p>" }} />
-            )}
-          </section>
+          <TaskDescriptionSection
+            description={description}
+            descriptionMode={descriptionMode}
+            markdownHtml={markdownHtml}
+            onDescriptionChange={(value) => {
+              setDescription(value)
+              setDescriptionDirty(true)
+            }}
+            onDescriptionModeChange={setDescriptionMode}
+          />
+          {descriptionDirty ? <div className="-mt-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">描述有未保存变更，点击底部“保存”提交。</div> : null}
 
-          <section className="space-y-3 border-t border-border/60 pt-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Subtasks</h3>
-              <span className="text-xs text-muted-foreground">{task.subtasks?.length ?? 0}</span>
-            </div>
-            <div className="space-y-2">
-              {task.subtasks?.map((subtask) => (
-                <div key={subtask.id} className="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-muted/40">
-                  <button type="button" onClick={() => void toggleSubtask(subtask)} className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-xs">
-                    {subtask.status === "done" ? "✓" : ""}
-                  </button>
-                  <span className={`min-w-0 flex-1 truncate text-sm ${subtask.status === "done" ? "text-muted-foreground line-through" : "text-foreground"}`}>{subtask.title}</span>
-                </div>
-              ))}
-              <div className="flex items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-sm text-muted-foreground">
-                <Plus className="h-4 w-4" />
-                <input value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void createSubtask() } }} className="h-8 flex-1 bg-transparent outline-none placeholder:text-muted-foreground" placeholder="回车创建子任务" />
-              </div>
-            </div>
-          </section>
+          <TaskSubtasksSection
+            subtasks={task.subtasks}
+            subtaskDraft={subtaskDraft}
+            draggingSubtaskId={draggingSubtaskId}
+            onToggleSubtask={(subtask) => void toggleSubtask(subtask)}
+            onSubtaskDragStart={setDraggingSubtaskId}
+            onSubtaskDrop={(targetSubtaskId) => void reorderSubtask(targetSubtaskId)}
+            onSubtaskDraftChange={setSubtaskDraft}
+            onCreateSubtask={() => void createSubtask()}
+          />
 
-          <section className="space-y-3 border-t border-border/60 pt-5">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Tags</h3>
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-input px-3 py-2 focus-within:border-border/80">
-              {tagNames.map((tag) => (
-                <span key={tag} className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/80">
-                  {tag}
-                  <button type="button" onClick={() => setTagNames((current) => current.filter((item) => item !== tag))} className="ml-1 text-muted-foreground hover:text-foreground">×</button>
-                </span>
-              ))}
-              <input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); commitTag() } }} onBlur={commitTag} className="min-w-[90px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" placeholder="输入标签后回车" />
-            </div>
-          </section>
+          <TaskStructureGuidanceSection task={task} />
 
-          <section className="space-y-2 border-t border-border/60 pt-5">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Recent entries</h3>
-            {task.timeEntries?.length ? task.timeEntries.map((entry) => (
-              <div key={entry.id} className="rounded-xl px-3 py-2 hover:bg-muted/30">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">{entry.title}</p>
-                    <p className="text-xs text-muted-foreground">{new Date(entry.startedAt).toLocaleString("zh-CN")}</p>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{Math.round(entry.durationSec / 60)} 分钟</span>
-                </div>
-              </div>
-            )) : <p className="text-sm text-muted-foreground">暂无时间记录</p>}
-          </section>
-        </div>
-      </div>
-
-      <div className="sticky bottom-0 mt-auto border-t border-border/70 bg-card/95 px-5 py-3 backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
-          <Link href={`/tasks/${task.id}`} className="text-sm font-medium text-primary hover:underline">独立详情页</Link>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => void save({ status: "archived" })} className="inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><XCircle className="mr-1 h-4 w-4" />放弃</button>
-            <button type="button" onClick={() => void save({ pinToTop: true })} className="inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm text-amber-700 hover:bg-amber-50"><Pin className="mr-1 h-4 w-4" />置顶</button>
-            <button type="button" onClick={() => void handleDelete()} className="inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm text-destructive hover:bg-destructive/10"><Trash2 className="mr-1 h-4 w-4" />删除</button>
-            <button type="button" onClick={() => void save()} disabled={isSaving || !title.trim()} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50">{isSaving ? "保存中" : "保存"}</button>
+          <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm">
+            <p className="font-medium text-foreground">下一步建议</p>
+            <ul className="mt-2 space-y-2 text-muted-foreground">
+              <li>先补齐时间、清单和优先级，减少执行前决策成本。</li>
+              <li>如果任务已经准备好，直接开始计时进入执行。</li>
+              <li>如果子任务较多或依赖复杂，后续建议升级为 Flow。</li>
+            </ul>
           </div>
+
+          <TaskTagsSection
+            tagNames={tagNames}
+            tagInput={tagInput}
+            onRemoveTag={(tag) => setTagNames((current) => current.filter((item) => item !== tag))}
+            onTagInputChange={setTagInput}
+            onCommitTag={commitTag}
+          />
+
+          <TaskTimeEntriesSection task={task} />
         </div>
       </div>
+
+      <TaskDetailFooter
+        task={{ ...task, title }}
+        isSaving={isSaving}
+        onArchive={() => void save({ status: "cancelled" })}
+        onPin={() => void save({ pinToTop: true })}
+        onDelete={() => void handleDelete()}
+        onSave={() => void save()}
+      />
     </div>
   )
 }

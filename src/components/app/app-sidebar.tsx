@@ -1,12 +1,11 @@
 "use client"
 
-import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Bot, Calendar, CalendarCheck, CalendarDays, CalendarRange, Check, ChevronRight, FolderPlus, Grid2x2, Lightbulb, List, ListTodo, MoreHorizontal, Palette, Plus, Search, Settings, Settings2, Shield, Sparkles, Sun, User, X } from "lucide-react"
-import { SignOutButton } from "@/components/auth/sign-out-button"
+import { Bot, Calendar, CalendarCheck, CalendarDays, CalendarRange, ChevronRight, FolderPlus, Grid2x2, Lightbulb, List, ListTodo, MoreHorizontal, Palette, Plus, Search, Settings, Settings2, Shield, Sparkles, Sun, User, X } from "lucide-react"
 import { TaskSearchModal } from "@/components/app/task-search-modal"
+import { SidebarAccountMenu, SidebarSettingsPanel, SidebarTasksPanel } from "@/components/app/app-sidebar-sections"
 import { DropdownSelect } from "@/components/ui/dropdown-select"
 import { emojiCategoryLabels, emojiCategoryOrder, emojiSeedsByCategory, type EmojiCategoryKey, type EmojiSeedItem } from "@/data/emojis"
 import { cn } from "@/lib/utils/cn"
@@ -662,190 +661,55 @@ export function AppSidebar({ email, avatarUrl }: AppSidebarProps) {
         </div>
 
         <div ref={accountMenuRef} className="relative flex w-full flex-col items-center px-2">
-          <button
-            type="button"
-            aria-label="账号菜单"
-            onClick={() => setShowAccountMenu((value) => !value)}
-            className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-2xl transition-all duration-200",
-              pathname === "/settings" || showAccountMenu
-                ? "bg-card text-foreground shadow-sm ring-1 ring-border/70"
-                : "text-muted-foreground hover:bg-card/70 hover:text-foreground hover:shadow-sm",
-            )}
-          >
-            {avatarUrl ? <Image src={avatarUrl} alt="用户头像" width={32} height={32} className="h-8 w-8 rounded-xl object-cover shadow-sm" /> : <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-foreground text-xs font-semibold text-background shadow-sm">{email.slice(0, 1).toUpperCase()}</span>}
-          </button>
-
-          {renderAccountMenu ? (
-            <div className={cn("absolute bottom-0 left-[60px] z-20 w-60 transition-all duration-150", showAccountMenu ? "translate-x-0 scale-100 opacity-100" : "translate-x-1 scale-95 opacity-0")}>
-              <div className="absolute bottom-4 left-[-6px] h-3 w-3 rotate-45 rounded-[3px] border-l border-t border-border bg-card" />
-              <div className="rounded-2xl border border-border bg-card/95 p-3 shadow-floating backdrop-blur">
-              <div className="mb-3 flex items-center gap-3 rounded-xl bg-background px-3 py-3">
-                {avatarUrl ? <Image src={avatarUrl} alt="用户头像" width={36} height={36} className="h-9 w-9 rounded-xl object-cover" /> : <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-foreground text-sm font-semibold text-background">{email.slice(0, 1).toUpperCase()}</span>}
-                <div className="min-w-0">
-                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">账号</p>
-                  <p className="truncate text-sm font-medium text-foreground">{email}</p>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Link
-                  href="/settings?section=appearance"
-                  onClick={() => setShowAccountMenu(false)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-muted active:bg-muted/80",
-                    pathname === "/settings" ? "bg-primary/10 font-medium text-foreground" : "text-foreground",
-                  )}
-                >
-                  <Settings className="h-4 w-4" />
-                  <span>设置</span>
-                </Link>
-
-                <div className="rounded-xl p-1 transition-colors hover:bg-muted">
-                  <SignOutButton className="h-10 w-full justify-start gap-3 border-0 bg-transparent px-3 text-destructive shadow-none hover:bg-transparent hover:text-destructive" />
-                </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <SidebarAccountMenu
+            email={email}
+            avatarUrl={avatarUrl}
+            pathname={pathname}
+            showAccountMenu={showAccountMenu}
+            renderAccountMenu={renderAccountMenu}
+            onToggle={() => setShowAccountMenu((value) => !value)}
+            onClose={() => setShowAccountMenu(false)}
+          />
         </div>
       </div>
 
       {isTasksSection ? (
-        <div className="flex h-full min-h-0 w-[236px] flex-col bg-[hsl(var(--sidebar-panel))]">
-          <div className="border-b border-border px-4 py-3">
-            <h1 className="text-base font-semibold tracking-tight text-foreground">任务</h1>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-            <SidebarSection title="时间范围">
-              {views.map((item) => (
-                <Link
-                  key={item.key}
-                  href={`/tasks?view=${item.key}`}
-                  className={cn(
-                    "flex h-9 items-center justify-between rounded-xl px-3 text-sm transition-colors",
-                    activeView === item.key ? "bg-primary/10 font-medium text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
-                  </span>
-                  <span className="text-[11px] tabular-nums text-muted-foreground/75">{viewCounts[item.key]}</span>
-                </Link>
-              ))}
-            </SidebarSection>
-
-            <SidebarSection>
-              <div className="group mb-2 flex h-8 items-center justify-between px-3">
-                <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">清单</span>
-                <button
-                  type="button"
-                  onClick={() => openCreateListModal()}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                  aria-label="新建清单"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              <div className="space-y-1">
-                {lists.length ? (
-                  <>
-                    {lists.map((item) => (
-                      <ListTreeItem
-                        key={item.id}
-                        item={item}
-                        depth={0}
-                        isDarkMode={isDarkMode}
-                        activeListId={activeListId}
-                        collapsedListIds={collapsedListIds}
-                        openListMenuId={openListMenuId}
-                        renderListMenuId={renderListMenuId}
-                        inlineCreateParentId={inlineCreateParentId}
-                        inlineDraftName={listDraftName}
-                        isCreating={isCreating}
-                        onToggleCollapsed={toggleListCollapsed}
-                        onToggleMenu={setOpenListMenuId}
-                        onCreateSibling={(parentId) => startInlineCreate(parentId)}
-                        onCreateChild={(parentId) => startInlineCreate(parentId)}
-                        onInlineDraftNameChange={setListDraftName}
-                        onSubmitInlineCreate={() => void submitList()}
-                        onCancelInlineCreate={cancelInlineCreate}
-                        onOpenCreateModal={openCreateListModal}
-                        onPromoteCreateModal={promoteInlineCreateToModal}
-                        onEditList={openEditListModal}
-                        onDeleteList={handleDeleteList}
-                        onMoveList={handleMoveList}
-                        draggingListId={draggingListId}
-                        dropTargetListId={dropTargetListId}
-                        onDragStart={setDraggingListId}
-                        onDragEnd={() => {
-                          setDraggingListId(null)
-                          setDropTargetListId(null)
-                        }}
-                        onDragOverTarget={setDropTargetListId}
-                        onDropOnTarget={handleReorderList}
-                      />
-                    ))}
-                    {inlineCreateParentId === INLINE_ROOT_ID ? (
-                      <InlineListDraftRow
-                        depth={0}
-                        value={listDraftName}
-                        isCreating={isCreating}
-                        onChange={setListDraftName}
-                        onSubmit={() => void submitList()}
-                        onCancel={cancelInlineCreate}
-                        onMoreOptions={() => promoteInlineCreateToModal(null, null)}
-                      />
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {inlineCreateParentId === INLINE_ROOT_ID ? (
-                      <InlineListDraftRow
-                        depth={0}
-                        value={listDraftName}
-                        isCreating={isCreating}
-                        onChange={setListDraftName}
-                        onSubmit={() => void submitList()}
-                        onCancel={cancelInlineCreate}
-                        onMoreOptions={() => promoteInlineCreateToModal(null, null)}
-                      />
-                    ) : (
-                      <p className="px-3 text-sm text-muted-foreground">暂无清单</p>
-                    )}
-                  </>
-                )}
-              </div>
-            </SidebarSection>
-          </div>
-        </div>
+        <SidebarTasksPanel
+          activeView={activeView}
+          activeListId={activeListId}
+          viewCounts={viewCounts}
+          views={views}
+          lists={lists}
+          isDarkMode={isDarkMode}
+          collapsedListIds={collapsedListIds}
+          openListMenuId={openListMenuId}
+          renderListMenuId={renderListMenuId}
+          inlineCreateParentId={inlineCreateParentId}
+          listDraftName={listDraftName}
+          isCreating={isCreating}
+          onOpenCreateListModal={openCreateListModal}
+          onToggleCollapsed={toggleListCollapsed}
+          onToggleMenu={setOpenListMenuId}
+          onStartInlineCreate={startInlineCreate}
+          onInlineDraftNameChange={setListDraftName}
+          onSubmitInlineCreate={() => void submitList()}
+          onCancelInlineCreate={cancelInlineCreate}
+          onPromoteCreateModal={promoteInlineCreateToModal}
+          onEditList={openEditListModal}
+          onDeleteList={handleDeleteList}
+          onMoveList={handleMoveList}
+          draggingListId={draggingListId}
+          dropTargetListId={dropTargetListId}
+          onDragStart={setDraggingListId}
+          onDragEnd={() => {
+            setDraggingListId(null)
+            setDropTargetListId(null)
+          }}
+          onDragOverTarget={setDropTargetListId}
+          onDropOnTarget={handleReorderList}
+        />
       ) : isSettingsSection ? (
-        <div className="flex h-full min-h-0 w-[236px] flex-col bg-[hsl(var(--sidebar-panel))]">
-          <div className="border-b border-border px-4 py-3">
-            <h1 className="text-base font-semibold tracking-tight text-foreground">设置</h1>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-            <SidebarSection title="设置菜单">
-              {settingsNav.map((item) => (
-                <Link
-                  key={item.key}
-                  href={`/settings?section=${item.key}`}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
-                    activeSettingsSection === item.key ? "bg-primary/10 font-medium text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <item.icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                </Link>
-              ))}
-            </SidebarSection>
-          </div>
-        </div>
+        <SidebarSettingsPanel activeSettingsSection={activeSettingsSection} settingsNav={settingsNav} />
       ) : null}
 
       {showListModal ? (
@@ -1526,68 +1390,6 @@ function unifiedToEmoji(unified: string) {
     .join("")
 }
 
-function getSoftIconStyle(hexColor: string, isDarkMode: boolean) {
-  const rgb = hexToRgb(hexColor) ?? { r: 107, g: 141, b: 255 }
-  const { h, s } = rgbToHsl(rgb.r, rgb.g, rgb.b)
-
-  const backgroundSaturation = clamp(s * 0.32, 18, 28)
-  const backgroundLightness = isDarkMode ? 26 : 92
-  const iconSaturation = clamp(s * 0.58, 26, 42)
-  const iconLightness = isDarkMode ? 78 : 42
-
-  return {
-    backgroundColor: `hsla(${h} ${backgroundSaturation}% ${backgroundLightness}% / ${isDarkMode ? 0.22 : 0.12})`,
-    color: `hsl(${h} ${iconSaturation}% ${iconLightness}%)`,
-    boxShadow: `inset 0 0 0 1px ${isDarkMode ? "rgba(255,255,255,0.14)" : "rgba(15,23,42,0.08)"}`,
-  }
-}
-
-function hexToRgb(hexColor: string) {
-  const normalized = hexColor.replace("#", "")
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null
-
-  return {
-    r: Number.parseInt(normalized.slice(0, 2), 16),
-    g: Number.parseInt(normalized.slice(2, 4), 16),
-    b: Number.parseInt(normalized.slice(4, 6), 16),
-  }
-}
-
-function rgbToHsl(r: number, g: number, b: number) {
-  const red = r / 255
-  const green = g / 255
-  const blue = b / 255
-  const max = Math.max(red, green, blue)
-  const min = Math.min(red, green, blue)
-  const lightness = (max + min) / 2
-
-  if (max === min) {
-    return { h: 0, s: 0, l: lightness * 100 }
-  }
-
-  const delta = max - min
-  const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min)
-  let hue = 0
-
-  switch (max) {
-    case red:
-      hue = (green - blue) / delta + (green < blue ? 6 : 0)
-      break
-    case green:
-      hue = (blue - red) / delta + 2
-      break
-    default:
-      hue = (red - green) / delta + 4
-      break
-  }
-
-  return { h: Math.round(hue * 60), s: saturation * 100, l: lightness * 100 }
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
-}
-
 function flattenLists(items: NestedList[], depth = 0): Array<NestedList & { depth: number }> {
   return items.flatMap((item) => [
     { ...item, depth },
@@ -1610,11 +1412,3 @@ function collectDescendantIds(items: NestedList[], targetId: string): string[] {
   return []
 }
 
-function SidebarSection({ title, children }: { title?: string; children: React.ReactNode }) {
-  return (
-    <section className="mb-6">
-      {title ? <p className="mb-2 px-3 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{title}</p> : null}
-      <div className="space-y-1">{children}</div>
-    </section>
-  )
-}

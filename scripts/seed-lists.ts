@@ -50,7 +50,6 @@ async function main() {
 
   // 创建一些任务
   const workList = createdLists.find(l => l.name === '工作')
-  const lifeList = createdLists.find(l => l.name === '生活')
   const helloList = createdLists.find(l => l.name === '你好')
 
   if (workList) {

@@ -1,5 +1,6 @@
 import { prisma } from "@/server/db/client"
 import { ensureUserSpace } from "@/server/db/bootstrap"
+import { getDateRanges } from "@/server/time/ranges"
 
 type CurrentUser = {
   id: string
@@ -11,12 +12,7 @@ type CurrentUser = {
 export async function getTodaySummary(user: CurrentUser) {
   const space = await ensureUserSpace(user)
 
-  const now = new Date()
-  const startOfDay = new Date(now)
-  startOfDay.setHours(0, 0, 0, 0)
-
-  const endOfDay = new Date(now)
-  endOfDay.setHours(23, 59, 59, 999)
+  const { now, startOfToday: startOfDay, endOfToday: endOfDay } = getDateRanges()
 
   const [todayTasks, todayTaskCount, completedCount, inProgressCount, overdueCount, activeTimer, timeEntries] =
     await Promise.all([

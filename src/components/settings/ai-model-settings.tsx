@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Save } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { LoaderCircle, Save, TestTubeDiagonal } from "lucide-react"
 import { DropdownSelect } from "@/components/ui/dropdown-select"
 import { defaultAiConfig, loadAiConfig, saveAiConfig, type AiConfig, type AiProvider } from "@/lib/ai-config"
 
@@ -14,8 +14,21 @@ const providerModels: Record<AiProvider, string[]> = {
 export function AiModelSettings() {
   const [config, setConfig] = useState<AiConfig>(() => loadAiConfig())
   const [saved, setSaved] = useState(false)
+  const [isTesting, setIsTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{
+    type: "success" | "error"
+    summary: string
+    output?: string
+    meta?: string
+  } | null>(null)
+  const testResultRef = useRef<HTMLDivElement | null>(null)
 
   const modelOptions = useMemo(() => providerModels[config.provider], [config.provider])
+
+  useEffect(() => {
+    if (!testResult) return
+    testResultRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  }, [testResult])
 
   function updateConfig<K extends keyof AiConfig>(key: K, value: AiConfig[K]) {
     setSaved(false)
@@ -30,6 +43,39 @@ export function AiModelSettings() {
   function handleSave() {
     saveAiConfig(config)
     setSaved(true)
+  }
+
+  async function handleTest() {
+    setIsTesting(true)
+    setTestResult(null)
+
+    try {
+      const response = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ config }),
+      })
+
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload?.error?.message ?? "模型测试失败")
+      }
+
+      setTestResult({
+        type: "success",
+        summary: "模型连接成功",
+        output: payload.data?.output ?? "",
+        meta: `${payload.data?.provider ?? config.provider} / ${payload.data?.model ?? config.model}`,
+      })
+    } catch (error) {
+      setTestResult({
+        type: "error",
+        summary: error instanceof Error ? error.message : "模型测试失败",
+      })
+    } finally {
+      setIsTesting(false)
+    }
   }
 
   return (
@@ -57,13 +103,21 @@ export function AiModelSettings() {
 
           <label className="space-y-2">
             <span className="text-sm font-medium">模型</span>
-            <DropdownSelect
-              items={modelOptions.map((model) => ({ value: model, label: model }))}
-              value={config.model}
-              placeholder="选择模型"
-              onChange={(value) => updateConfig("model", value)}
-              searchable
-            />
+            <div className="space-y-2">
+              <DropdownSelect
+                items={modelOptions.map((model) => ({ value: model, label: model }))}
+                value={modelOptions.includes(config.model) ? config.model : ""}
+                placeholder="选择推荐模型"
+                onChange={(value) => updateConfig("model", value)}
+                searchable
+              />
+              <input
+                className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                value={config.model}
+                onChange={(event) => updateConfig("model", event.target.value)}
+                placeholder="也可以手动输入模型名，例如 gpt-4o-mini"
+              />
+            </div>
           </label>
 
           <label className="space-y-2 md:col-span-2">
@@ -87,8 +141,42 @@ export function AiModelSettings() {
             <Save className="h-4 w-4" />
             保存配置
           </button>
+          <button
+            type="button"
+            onClick={() => void handleTest()}
+            disabled={isTesting}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {isTesting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <TestTubeDiagonal className="h-4 w-4" />}
+            {isTesting ? "测试中" : "测试模型"}
+          </button>
           {saved ? <span className="text-sm text-muted-foreground">已保存</span> : null}
         </div>
+
+        {testResult ? (
+          <div
+            ref={testResultRef}
+            className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+              testResult.type === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-destructive/20 bg-destructive/10 text-destructive"
+            }`}
+          >
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="font-medium">{testResult.type === "success" ? "测试结果" : "测试失败"}</p>
+              {testResult.meta ? <span className="text-xs opacity-80">{testResult.meta}</span> : null}
+            </div>
+            <p className="mb-2 text-sm leading-6 whitespace-pre-wrap break-words">{testResult.summary}</p>
+            {testResult.output ? (
+              <div className="rounded-lg border border-border/60 bg-background/70 px-3 py-2">
+                <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">模型返回</p>
+                <div className="max-h-64 overflow-auto text-xs leading-6 whitespace-pre-wrap break-words">
+                  {testResult.output}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <aside className="space-y-5">

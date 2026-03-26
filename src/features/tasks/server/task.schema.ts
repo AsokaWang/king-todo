@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const taskStatusSchema = z.enum(["todo", "in_progress", "done", "archived"])
+export const taskStatusSchema = z.enum(["todo", "in_progress", "done", "cancelled", "archived"])
 export const taskPrioritySchema = z.enum(["low", "medium", "high"])
 
 export const listTasksQuerySchema = z.object({
@@ -58,9 +58,16 @@ export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>
 export type CreateTaskBody = z.infer<typeof createTaskBodySchema>
 export type UpdateTaskBody = z.infer<typeof updateTaskBodySchema>
 
+const reorderContainerSchema = z.object({
+  type: z.enum(["list", "task"]),
+  id: z.string().trim().nullable(),
+})
+
 export const reorderTasksBodySchema = z.object({
-  orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
-  listId: z.string().trim().nullable().optional(),
+  taskId: z.string().trim().min(1),
+  sourceContainer: reorderContainerSchema,
+  targetContainer: reorderContainerSchema,
+  targetIndex: z.number().int().min(0),
 })
 
 export type ReorderTasksBody = z.infer<typeof reorderTasksBodySchema>

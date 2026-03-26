@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Circle,
   Clock3,
+  Info,
   Flag,
   FolderTree,
   GripVertical,
@@ -18,39 +19,20 @@ import {
   CalendarCheck,
   CalendarClock,
   Eraser,
+  Pin,
   Trash2,
+  Archive,
   Tag,
 } from "lucide-react"
 import { TaskDetailDrawer } from "@/features/tasks/components/task-detail-drawer"
 import { TaskDetailPanel } from "@/features/tasks/components/task-detail-panel"
+import { AiTaskDraftReviewSheet } from "@/features/tasks/components/ai-task-draft-review-sheet"
+import type { TaskListItemView } from "@/features/tasks/contracts"
+import { TimerActionButtons } from "@/components/timer/timer-action-buttons"
 import { DropdownSelect } from "@/components/ui/dropdown-select"
 import { loadAiConfig } from "@/lib/ai-config"
 
-type TaskItem = {
-  id: string
-  title: string
-  description?: string | null
-  status: "todo" | "in_progress" | "done" | "archived"
-  priority: "low" | "medium" | "high"
-  sortOrder: number
-  dueAt?: string | null
-  startAt?: string | null
-  estimatedMinutes?: number | null
-  actualMinutes: number
-  list?: {
-    id: string
-    name: string
-    emoji?: string | null
-    color?: string | null
-  } | null
-  taskTags?: Array<{
-    tag: {
-      id: string
-      name: string
-      color?: string | null
-    }
-  }>
-}
+type TaskItem = TaskListItemView
 
 type TasksResponse = {
   items: TaskItem[]
@@ -69,7 +51,6 @@ type TagOption = {
 type ParsedSubtaskDraft = { title: string }
 
 type AiParsedDraft = {
-  clientId: string
   title: string | null
   description: string | null
   startAt: string | null
@@ -81,6 +62,9 @@ type AiParsedDraft = {
   listName: string | null
   action: "create" | "pinToTop" | "archive" | "abandon"
   subtasks: ParsedSubtaskDraft[]
+  rationale?: string | null
+  riskLevel?: "low" | "medium" | "high"
+  suggestions?: string[]
   warnings?: string[]
 }
 
@@ -97,6 +81,15 @@ type NestedList = {
 }
 
 type FlatList = NestedList & { depth: number }
+
+type CurrentTimerTaskState = {
+  id: string
+  status: "running" | "paused"
+  task?: {
+    id: string
+    title: string
+  } | null
+}
 
 const SECTION_COLLAPSE_STORAGE_KEY = "king-todo-task-sections-collapsed"
 
@@ -162,10 +155,8 @@ export function TasksPageClient() {
   const [draftListId, setDraftListId] = useState("")
   const [draftTagNames, setDraftTagNames] = useState<string[]>([])
   const [draftSubtasks, setDraftSubtasks] = useState<ParsedSubtaskDraft[]>([])
-  const [aiTaskDrafts, setAiTaskDrafts] = useState<AiParsedDraft[]>([])
   const [availableTags, setAvailableTags] = useState<TagOption[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [isTogglingId, setIsTogglingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
@@ -176,9 +167,10 @@ export function TasksPageClient() {
   const [isParsingAi, setIsParsingAi] = useState(false)
   const [aiWarnings, setAiWarnings] = useState<string[]>([])
   const [aiParsedSummary, setAiParsedSummary] = useState<string | null>(null)
-  const [aiOverallConfidence, setAiOverallConfidence] = useState<number | null>(null)
-  const [draggingAiDraftId, setDraggingAiDraftId] = useState<string | null>(null)
-  const [dropAiDraftId, setDropAiDraftId] = useState<string | null>(null)
+  const [aiFeedbackTone, setAiFeedbackTone] = useState<"default" | "warning">("default")
+  const [aiDrafts, setAiDrafts] = useState<Array<AiParsedDraft & { clientId?: string; selected: boolean }>>([])
+  const [showAiDraftReview, setShowAiDraftReview] = useState(false)
+  const [currentTimer, setCurrentTimer] = useState<CurrentTimerTaskState | null>(null)
   const [collapsedSections, setCollapsedSections] = useState(defaultSectionState)
   const [activeQuickDate, setActiveQuickDate] = useState<"today" | "tomorrow" | "week" | null>(null)
   const pathname = usePathname()
@@ -205,15 +197,16 @@ export function TasksPageClient() {
 
   const pendingTasks = useMemo(() => {
     const now = Date.now()
-    return items.filter((task) => task.status !== "done" && !(task.dueAt && new Date(task.dueAt).getTime() < now))
+    return items.filter((task) => task.status !== "done" && task.status !== "cancelled" && !(task.dueAt && new Date(task.dueAt).getTime() < now))
   }, [items])
 
   const overdueTasks = useMemo(() => {
     const now = Date.now()
-    return items.filter((task) => task.status !== "done" && !!task.dueAt && new Date(task.dueAt).getTime() < now)
+    return items.filter((task) => task.status !== "done" && task.status !== "cancelled" && !!task.dueAt && new Date(task.dueAt).getTime() < now)
   }, [items])
 
   const completedTasks = useMemo(() => items.filter((task) => task.status === "done"), [items])
+  const cancelledTasks = useMemo(() => items.filter((task) => task.status === "cancelled"), [items])
 
   const visibleTaskIds = useMemo(() => items.map((task) => task.id), [items])
 
@@ -243,6 +236,12 @@ export function TasksPageClient() {
     const timeout = window.setTimeout(() => setAiParsedSummary(null), 3500)
     return () => window.clearTimeout(timeout)
   }, [aiParsedSummary])
+
+  useEffect(() => {
+    if (aiWarnings.length === 0) return
+    const timeout = window.setTimeout(() => setAiWarnings([]), 5000)
+    return () => window.clearTimeout(timeout)
+  }, [aiWarnings])
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -288,6 +287,17 @@ export function TasksPageClient() {
     setAvailableTags(payload.data as TagOption[])
   }, [])
 
+  const loadCurrentTimer = useCallback(async () => {
+    try {
+      const response = await fetch("/api/timer/current", { credentials: "include", cache: "no-store" })
+      const payload = await response.json()
+      if (response.ok && payload.ok) {
+        setCurrentTimer(payload.data.currentTimer)
+      }
+    } catch {
+    }
+  }, [])
+
   const loadTasks = useCallback(async () => {
     setIsLoading(true)
     setError(null)
@@ -322,7 +332,7 @@ export function TasksPageClient() {
 
     async function loadAll() {
       try {
-        await Promise.all([loadLists(), loadTasks(), loadTags()])
+        await Promise.all([loadLists(), loadTasks(), loadTags(), loadCurrentTimer()])
       } catch (loadError) {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "Failed to load task workspace.")
@@ -335,7 +345,7 @@ export function TasksPageClient() {
     return () => {
       active = false
     }
-  }, [loadLists, loadTags, loadTasks])
+  }, [loadCurrentTimer, loadLists, loadTags, loadTasks])
 
   useEffect(() => {
     setSelectedTaskId(null)
@@ -347,97 +357,103 @@ export function TasksPageClient() {
     return () => window.clearTimeout(timeout)
   }, [newTaskHighlightId])
 
-  async function handleCreateTask(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function createTasksFromDrafts(draftsToCreate: AiParsedDraft[]) {
+    let firstCreatedTask: TaskItem | null = null
+    let createdCount = 0
 
-    if (!draftTitle.trim() && aiTaskDrafts.length === 0) {
-      return
-    }
+    for (const draft of draftsToCreate) {
+      if (!draft.title?.trim()) continue
 
-    setIsSubmitting(true)
-    setError(null)
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: draft.title.trim(),
+          listId: draft.listId || undefined,
+          priority: draft.priority ?? "medium",
+          startAt: draft.startAt ? new Date(draft.startAt).toISOString() : undefined,
+          dueAt: draft.dueAt ? new Date(draft.dueAt).toISOString() : undefined,
+          tagNames: draft.tagNames,
+        }),
+      })
 
-    try {
-      const draftsToCreate = aiTaskDrafts.length
-        ? aiTaskDrafts.filter((item) => item.title?.trim())
-        : [
-            {
-              clientId: `manual-${Date.now()}`,
-              title: draftTitle.trim(),
-              description: null,
-              startAt: draftStartAt || null,
-              dueAt: draftDueAt || null,
-              priority: draftPriority,
-              confidence: 1,
-              tagNames: draftTagNames,
-              listId: draftListId || null,
-              listName: null,
-              action: "create" as const,
-              subtasks: draftSubtasks,
-              warnings: [],
-            },
-          ]
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload?.error?.message ?? "Failed to create task.")
+      }
 
-      let firstCreatedTask: TaskItem | null = null
+      const createdTask = payload.data as TaskItem
+      firstCreatedTask ??= createdTask
+      createdCount += 1
 
-      for (const draft of draftsToCreate) {
-        const response = await fetch("/api/tasks", {
+      for (const subtask of draft.subtasks) {
+        const subtaskResponse = await fetch("/api/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({
-            title: draft.title?.trim(),
-            listId: draft.listId || undefined,
-            priority: draft.priority ?? "medium",
-            startAt: draft.startAt ? new Date(draft.startAt).toISOString() : undefined,
-            dueAt: draft.dueAt ? new Date(draft.dueAt).toISOString() : undefined,
-            tagNames: draft.tagNames,
+            title: subtask.title,
+            parentTaskId: createdTask.id,
+            listId: createdTask.list?.id || draft.listId || undefined,
           }),
         })
-
-        const payload = await response.json()
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload?.error?.message ?? "Failed to create task.")
-        }
-
-        const createdTask = payload.data as TaskItem
-        firstCreatedTask ??= createdTask
-
-        for (const subtask of draft.subtasks) {
-          const subtaskResponse = await fetch("/api/tasks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              title: subtask.title,
-              parentTaskId: createdTask.id,
-              listId: createdTask.list?.id || draft.listId || undefined,
-            }),
-          })
-          const subtaskPayload = await subtaskResponse.json()
-          if (!subtaskResponse.ok || !subtaskPayload.ok) {
-            throw new Error(subtaskPayload?.error?.message ?? "Failed to create AI subtasks.")
-          }
-        }
-
-        if (draft.action === "archive" || draft.action === "abandon") {
-          await fetch(`/api/tasks/${createdTask.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ archive: true }),
-          })
-        }
-
-        if (draft.action === "pinToTop") {
-          await fetch(`/api/tasks/${createdTask.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ pinToTop: true }),
-          })
+        const subtaskPayload = await subtaskResponse.json()
+        if (!subtaskResponse.ok || !subtaskPayload.ok) {
+          throw new Error(subtaskPayload?.error?.message ?? "Failed to create AI subtasks.")
         }
       }
+
+      if (draft.action === "archive" || draft.action === "abandon") {
+        await fetch(`/api/tasks/${createdTask.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ archive: true }),
+        })
+      }
+
+      if (draft.action === "pinToTop") {
+        await fetch(`/api/tasks/${createdTask.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ pinToTop: true }),
+        })
+      }
+    }
+
+    return { firstCreatedTask, createdCount }
+  }
+
+  async function handleCreateTask(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!draftTitle.trim()) {
+      return
+    }
+
+    setError(null)
+
+    try {
+      const draftsToCreate: AiParsedDraft[] = [
+        {
+          title: draftTitle.trim(),
+          description: null,
+          startAt: draftStartAt || null,
+          dueAt: draftDueAt || null,
+          priority: draftPriority,
+          confidence: 1,
+          tagNames: draftTagNames,
+          listId: draftListId || null,
+          listName: null,
+          action: "create",
+          subtasks: draftSubtasks,
+          warnings: [],
+        },
+      ]
+
+      const { firstCreatedTask } = await createTasksFromDrafts(draftsToCreate)
 
       if (firstCreatedTask) {
         setItems((current) => [firstCreatedTask!, ...current.map((task) => ({ ...task, sortOrder: task.sortOrder + 1 }))])
@@ -448,10 +464,9 @@ export function TasksPageClient() {
       setDraftPriority("medium")
       setDraftTagNames([])
       setDraftSubtasks([])
-      setAiTaskDrafts([])
       setAiWarnings([])
-      setAiOverallConfidence(null)
       setAiParsedSummary(null)
+      setAiFeedbackTone("default")
       setActiveQuickDate(null)
       setShowCalendarPicker(false)
       setShowMoreOptions(false)
@@ -463,7 +478,6 @@ export function TasksPageClient() {
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Failed to create task.")
     } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -478,6 +492,15 @@ export function TasksPageClient() {
 
     try {
       const config = loadAiConfig()
+
+      if (config.provider !== "custom" && !config.apiKey.trim()) {
+        throw new Error("请先到设置页配置 AI API Key")
+      }
+
+      if (config.provider === "custom" && !config.baseUrl.trim()) {
+        throw new Error("Custom provider 需要先配置 Base URL")
+      }
+
       const response = await fetch("/api/ai/parse-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -500,30 +523,31 @@ export function TasksPageClient() {
 
       const parsedTasks = (payload.data.tasks as AiParsedDraft[]) ?? []
       const warnings = (payload.data.warnings as string[]) ?? []
-      const overallConfidence = (payload.data.confidence as number | undefined) ?? null
-
-      setAiTaskDrafts(parsedTasks)
-      setAiOverallConfidence(overallConfidence)
-      if (parsedTasks.length === 1) {
-        const parsed = parsedTasks[0]
-        setDraftTitle(parsed.title ?? draftTitle)
-        setDraftStartAt(parsed.startAt ? new Date(parsed.startAt).toISOString().slice(0, 16) : draftStartAt)
-        setDraftDueAt(parsed.dueAt ? new Date(parsed.dueAt).toISOString().slice(0, 16) : draftDueAt)
-        setDraftPriority(parsed.priority ?? draftPriority)
-        setDraftTagNames(parsed.tagNames.length ? parsed.tagNames : draftTagNames)
-        setDraftListId(parsed.listId ?? draftListId ?? "")
-        setDraftSubtasks(parsed.subtasks ?? [])
-      }
       setAiWarnings(warnings)
 
-      const summaryParts = [
-        parsedTasks.length > 1 ? `任务:${parsedTasks.length}` : null,
-        parsedTasks.some((item) => item.dueAt || item.startAt) ? "已识别时间" : null,
-        parsedTasks.some((item) => item.action !== "create") ? "含操作意图" : null,
-        parsedTasks.reduce((sum, item) => sum + item.subtasks.length, 0) ? `子任务:${parsedTasks.reduce((sum, item) => sum + item.subtasks.length, 0)}` : null,
-      ].filter(Boolean)
-      setAiParsedSummary(summaryParts.length ? `AI 已填充 ${summaryParts.join(" · ")}` : "AI 已完成解析，请确认后创建")
-      setShowMoreOptions(true)
+      const validDrafts = parsedTasks.filter((item) => item.title?.trim())
+      if (validDrafts.length === 0) {
+        setAiFeedbackTone("warning")
+        setAiParsedSummary(warnings[0] ?? "AI 没有识别出可创建的任务，请调整描述后重试。")
+        return
+      }
+
+      const normalizedDrafts = validDrafts.map((draft, index) => ({ ...draft, clientId: `ai-${Date.now()}-${index}`, selected: true }))
+      setAiDrafts(normalizedDrafts)
+      setShowAiDraftReview(true)
+      setAiFeedbackTone(warnings.length > 0 ? "warning" : "default")
+      setAiParsedSummary(`AI 已生成 ${normalizedDrafts.length} 条待确认草稿。`)
+      setAiWarnings(warnings)
+      setDraftStartAt("")
+      setDraftDueAt("")
+      setDraftPriority("medium")
+      setDraftListId(activeListId)
+      setDraftTagNames([])
+      setDraftSubtasks([])
+      setActiveQuickDate(null)
+      setShowCalendarPicker(false)
+      setShowMoreOptions(false)
+      setAiFeedbackTone(warnings.length > 0 ? "warning" : "default")
     } catch (parseError) {
       setError(parseError instanceof Error ? parseError.message : "AI 解析失败")
     } finally {
@@ -593,19 +617,22 @@ export function TasksPageClient() {
     setActiveQuickDate(null)
   }
 
-  async function persistTaskOrder(orderedTaskIds: string[]) {
+  async function persistTaskOrder(taskId: string, targetTaskId: string, orderedTaskIds: string[]) {
     setItems((current) => {
       const orderMap = new Map(orderedTaskIds.map((id, index) => [id, index]))
       return [...current].sort((a, b) => (orderMap.get(a.id) ?? 9999) - (orderMap.get(b.id) ?? 9999))
     })
 
+    const targetIndex = orderedTaskIds.indexOf(taskId)
     const response = await fetch("/api/tasks/reorder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
-        orderedTaskIds,
-        listId: activeListId || null,
+        taskId,
+        sourceContainer: { type: "list", id: activeListId || null },
+        targetContainer: { type: "list", id: activeListId || null },
+        targetIndex: targetIndex === -1 ? orderedTaskIds.indexOf(targetTaskId) : targetIndex,
       }),
     })
     const payload = await response.json()
@@ -640,7 +667,7 @@ export function TasksPageClient() {
     })
 
     try {
-      await persistTaskOrder(nextAllIds)
+      await persistTaskOrder(dragTaskId, dropTaskId, nextAllIds)
       setDropTargetTaskId(null)
       await loadTasks()
     } catch (reorderError) {
@@ -656,10 +683,12 @@ export function TasksPageClient() {
       | { type: "today" | "tomorrow" | "clearDate" }
       | { type: "priority"; value: TaskItem["priority"] }
       | { type: "move"; value: string }
+      | { type: "pin" }
+      | { type: "archive" }
       | { type: "delete" },
   ) {
     const now = new Date()
-    let body: Record<string, string | null>
+    let body: Record<string, string | boolean | null>
 
     if (action.type === "delete") {
       const response = await fetch(`/api/tasks/${task.id}`, { method: "DELETE", credentials: "include" })
@@ -672,7 +701,11 @@ export function TasksPageClient() {
       return
     }
 
-    if (action.type === "priority") {
+    if (action.type === "pin") {
+      body = { pinToTop: true }
+    } else if (action.type === "archive") {
+      body = { status: "cancelled" }
+    } else if (action.type === "priority") {
       body = { priority: action.value }
     } else if (action.type === "move") {
       body = { listId: action.value }
@@ -706,46 +739,6 @@ export function TasksPageClient() {
     }
   }
 
-  function updateAiTaskDraft(clientId: string, updater: (draft: AiParsedDraft) => AiParsedDraft) {
-    setAiTaskDrafts((current) => current.map((item) => (item.clientId === clientId ? updater(item) : item)))
-  }
-
-  function removeAiTaskDraft(clientId: string) {
-    setAiTaskDrafts((current) => current.filter((item) => item.clientId !== clientId))
-  }
-
-  function reorderAiTaskDrafts(dragId: string, dropId: string) {
-    setAiTaskDrafts((current) => {
-      const next = [...current]
-      const dragIndex = next.findIndex((item) => item.clientId === dragId)
-      const dropIndex = next.findIndex((item) => item.clientId === dropId)
-      if (dragIndex === -1 || dropIndex === -1) return current
-      const [moved] = next.splice(dragIndex, 1)
-      next.splice(dropIndex, 0, moved)
-      return next
-    })
-  }
-
-  function mergeAiDraftIntoSubtask(sourceId: string, targetId: string) {
-    if (sourceId === targetId) return
-    setAiTaskDrafts((current) => {
-      const source = current.find((item) => item.clientId === sourceId)
-      if (!source?.title) return current
-      const mergedSubtasks: ParsedSubtaskDraft[] = [{ title: source.title }, ...source.subtasks]
-      return current
-        .filter((item) => item.clientId !== sourceId)
-        .map((item) =>
-          item.clientId === targetId
-            ? {
-                ...item,
-                subtasks: [...item.subtasks, ...mergedSubtasks],
-                warnings: [...(item.warnings ?? []), `已将“${source.title}”合并为子任务`],
-              }
-            : item,
-        )
-    })
-  }
-
   const dateSummary = useMemo(() => {
     if (draftStartAt && draftDueAt) {
       return `${draftStartAt.slice(5, 16)} - ${draftDueAt.slice(5, 16)}`
@@ -757,12 +750,15 @@ export function TasksPageClient() {
 
   return (
     <>
-      <div className="grid min-h-[calc(100vh-8rem)] gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="min-w-0 space-y-3">
-          <section className="rounded-xl border border-border/80 bg-card px-4 py-4 shadow-none">
+      <div className="grid h-[calc(100vh-8rem)] min-h-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(440px,30vw)] 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,32vw)]">
+        <div className="flex min-w-0 min-h-0 flex-col gap-3 overflow-hidden">
+          <section className="rounded-2xl border border-primary/15 bg-[linear-gradient(180deg,rgba(99,102,241,0.06),rgba(99,102,241,0.02))] px-4 py-4 shadow-none">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-2">
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Tasks</p>
+                <div className="inline-flex items-center gap-2 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-primary shadow-sm">
+                  <span className="h-2 w-2 rounded-full bg-primary" />
+                  Tasks Workspace
+                </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xl">{headerEmoji}</span>
                   <div>
@@ -812,14 +808,14 @@ export function TasksPageClient() {
                 />
 
                 <button
-                  type="button"
-                  onClick={() => void handleParseWithAi()}
-                  disabled={isParsingAi || !draftTitle.trim()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-violet-50 hover:text-violet-600 disabled:opacity-50"
-                  aria-label="AI 解析任务"
-                >
-                  <Bot className={`h-4 w-4 ${isParsingAi ? "animate-pulse" : ""}`} />
-                </button>
+                    type="button"
+                    onClick={() => void handleParseWithAi()}
+                    disabled={isParsingAi || !draftTitle.trim()}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                    aria-label="AI 解析任务"
+                  >
+                    <Bot className={`h-4 w-4 ${isParsingAi ? "animate-pulse" : ""}`} />
+                  </button>
 
                 <div ref={calendarRef} className="relative">
                   <button
@@ -842,7 +838,7 @@ export function TasksPageClient() {
                               onClick={() => applyQuickDate(type)}
                               className={`inline-flex h-7 items-center justify-center rounded-full border px-2.5 text-xs font-medium transition-all ${
                                 activeQuickDate === type
-                                  ? "border-sky-600 bg-sky-600 text-white"
+                                  ? "border-primary bg-primary text-primary-foreground"
                                   : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
                               }`}
                             >
@@ -950,7 +946,7 @@ export function TasksPageClient() {
                             items={availableTags.map((tag) => ({
                               value: tag.name,
                               label: tag.name,
-                              icon: <span className="h-2 w-2 rounded-full" style={{ backgroundColor: tag.color ?? "#94a3b8" }} />,
+                                icon: tag.color ? <span className="h-2 w-2 rounded-full" style={{ backgroundColor: tag.color }} /> : <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />,
                               group: "已有标签",
                             }))}
                             values={draftTagNames}
@@ -972,173 +968,22 @@ export function TasksPageClient() {
                 </div>
               </div>
 
-              {(aiParsedSummary || aiWarnings.length > 0 || draftSubtasks.length > 0 || aiTaskDrafts.length > 0) ? (
+              <div className="mt-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                建议流程：先收集 → AI 拆解 → 确认草稿 → 开始计时 → 在洞察页复盘。
+              </div>
+
+              {(aiParsedSummary || aiWarnings.length > 0 || draftSubtasks.length > 0) ? (
                 <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {aiParsedSummary ? <p className="text-xs text-violet-600">{aiParsedSummary}</p> : null}
-                    {aiOverallConfidence !== null ? (
-                      <span className={`rounded-md px-2 py-1 text-xs ${aiOverallConfidence < 0.65 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-                        置信度 {Math.round(aiOverallConfidence * 100)}%
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {aiTaskDrafts.length > 0 ? (
-                    <div className="space-y-3">
-                      {aiTaskDrafts.map((draft, index) => (
-                        <div
-                          key={draft.clientId}
-                          draggable
-                          onDragStart={() => setDraggingAiDraftId(draft.clientId)}
-                          onDragEnd={() => {
-                            setDraggingAiDraftId(null)
-                            setDropAiDraftId(null)
-                          }}
-                          onDragOver={(event) => {
-                            event.preventDefault()
-                            if (draggingAiDraftId !== draft.clientId) setDropAiDraftId(draft.clientId)
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault()
-                            if (draggingAiDraftId) reorderAiTaskDrafts(draggingAiDraftId, draft.clientId)
-                            setDraggingAiDraftId(null)
-                            setDropAiDraftId(null)
-                          }}
-                          className={`relative rounded-xl border p-3 ${draft.confidence < 0.65 ? "border-amber-200 bg-amber-50/50" : "border-violet-200/70 bg-violet-50/50"} ${dropAiDraftId === draft.clientId && draggingAiDraftId !== draft.clientId ? "ring-2 ring-sky-300" : ""}`}
-                        >
-                          <div className="mb-3 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <span className="cursor-grab text-muted-foreground/60">⋮⋮</span>
-                              <p className="text-xs font-medium uppercase tracking-[0.16em] text-violet-700">AI 确认卡片 {index + 1}</p>
-                              <span className={`rounded-md px-2 py-1 text-[11px] ${draft.confidence < 0.65 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-                                {draft.confidence < 0.65 ? "低置信度" : "高置信度"} · {Math.round(draft.confidence * 100)}%
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {aiTaskDrafts.length > 1 ? (
-                                <DropdownSelect
-                                  items={aiTaskDrafts
-                                    .filter((item) => item.clientId !== draft.clientId)
-                                    .map((item) => ({ value: item.clientId, label: `合并到：${item.title ?? "未命名任务"}` }))}
-                                  placeholder="合并为子任务"
-                                  className="w-40"
-                                  onChange={(value) => mergeAiDraftIntoSubtask(draft.clientId, value)}
-                                />
-                              ) : null}
-                              <DropdownSelect
-                                items={[
-                                  { value: "create", label: "创建" },
-                                  { value: "pinToTop", label: "置顶" },
-                                  { value: "archive", label: "归档" },
-                                  { value: "abandon", label: "放弃" },
-                                ]}
-                                value={draft.action}
-                                placeholder="动作"
-                                className="w-28"
-                                onChange={(value) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, action: value as AiParsedDraft["action"] }))}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => removeAiTaskDraft(draft.clientId)}
-                                className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                              >
-                                删除卡片
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="grid gap-2 md:grid-cols-2">
-                            <input
-                              value={draft.title ?? ""}
-                              onChange={(event) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, title: event.target.value }))}
-                              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-                              placeholder="任务标题"
-                            />
-                            <DropdownSelect
-                              items={[
-                                { value: "high", label: "高优先级" },
-                                { value: "medium", label: "中优先级" },
-                                { value: "low", label: "低优先级" },
-                              ]}
-                              value={draft.priority ?? "medium"}
-                              placeholder="优先级"
-                              onChange={(value) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, priority: value as TaskItem["priority"] }))}
-                            />
-                            <input
-                              type="datetime-local"
-                              value={draft.startAt ? new Date(draft.startAt).toISOString().slice(0, 16) : ""}
-                              onChange={(event) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, startAt: event.target.value || null }))}
-                              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-                            />
-                            <input
-                              type="datetime-local"
-                              value={draft.dueAt ? new Date(draft.dueAt).toISOString().slice(0, 16) : ""}
-                              onChange={(event) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, dueAt: event.target.value || null }))}
-                              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-                            />
-                          </div>
-
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
-                            <DropdownSelect
-                              items={[
-                                { value: "", label: "未分类", icon: "📁", group: "默认" },
-                                ...flatLists.map((list) => ({ value: list.id, label: list.name, icon: list.emoji ?? "📁", group: list.depth === 0 ? "顶级清单" : "子清单" })),
-                              ]}
-                              value={draft.listId ?? ""}
-                              placeholder="未分类"
-                              searchable
-                              grouped
-                              onChange={(value) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, listId: value || null }))}
-                            />
-                            <DropdownSelect
-                              items={availableTags.map((tag) => ({
-                                value: tag.name,
-                                label: tag.name,
-                                icon: <span className="h-2 w-2 rounded-full" style={{ backgroundColor: tag.color ?? "#94a3b8" }} />,
-                                group: "已有标签",
-                              }))}
-                              values={draft.tagNames}
-                              placeholder="标签"
-                              multiple
-                              searchable
-                              grouped
-                              closeOnSelect={false}
-                              createLabel="创建标签"
-                              onCreateOption={async (label) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, tagNames: item.tagNames.includes(label) ? item.tagNames : [...item.tagNames, label] }))}
-                              onValuesChange={(values) => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, tagNames: values }))}
-                            />
-                          </div>
-
-                          <div className="mt-2 space-y-2">
-                            {draft.subtasks.length > 0 ? (
-                              <div className="flex flex-wrap gap-2">
-                                {draft.subtasks.map((subtask, subtaskIndex) => (
-                                  <span key={`${subtask.title}-${subtaskIndex}`} className="inline-flex items-center rounded-md bg-background px-2 py-1 text-xs text-muted-foreground">
-                                    {subtask.title}
-                                    <button
-                                      type="button"
-                                      onClick={() => updateAiTaskDraft(draft.clientId, (item) => ({ ...item, subtasks: item.subtasks.filter((_, index) => index !== subtaskIndex) }))}
-                                      className="ml-1 text-muted-foreground hover:text-foreground"
-                                    >
-                                      ×
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-
-                            {draft.warnings?.length ? (
-                              <div className="flex flex-wrap gap-2">
-                                {draft.warnings.map((warning, warningIndex) => (
-                                  <span key={`${warning}-${warningIndex}`} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                                    {warning}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      ))}
+                  {aiParsedSummary ? (
+                    <div
+                      className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${
+                        aiFeedbackTone === "warning"
+                          ? "border-border bg-muted text-foreground"
+                          : "border-primary/20 bg-primary/10 text-primary"
+                      }`}
+                    >
+                      <Info className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{aiParsedSummary}</span>
                     </div>
                   ) : null}
 
@@ -1155,7 +1000,7 @@ export function TasksPageClient() {
                   {aiWarnings.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {aiWarnings.map((warning, index) => (
-                        <span key={`${warning}-${index}`} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                        <span key={`${warning}-${index}`} className="rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground">
                           {warning}
                         </span>
                       ))}
@@ -1171,20 +1016,21 @@ export function TasksPageClient() {
           ) : null}
 
           {isLoading ? (
-            <div className="space-y-3">
+            <div className="flex-1 space-y-3 overflow-y-auto pr-1">
               {Array.from({ length: 5 }).map((_, index) => (
                 <div key={index} className="h-16 animate-pulse rounded-2xl border border-border bg-card" />
               ))}
             </div>
           ) : (
-            <div className="space-y-3">
-              <TaskSection
-                title="待完成"
-                count={pendingTasks.length}
-                collapsed={collapsedSections.pending}
-                onToggle={() => toggleSection("pending")}
-              >
-                <TaskList
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+                <TaskSection
+                  title="待完成"
+                  count={pendingTasks.length}
+                  collapsed={collapsedSections.pending}
+                  onToggle={() => toggleSection("pending")}
+                >
+                  <TaskList
                   section="pending"
                   items={pendingTasks}
                   selectedTaskId={selectedTaskId}
@@ -1204,6 +1050,12 @@ export function TasksPageClient() {
                   onTaskAction={handleTaskQuickAction}
                   onSelect={setSelectedTaskId}
                   onToggleStatus={handleToggleStatus}
+                  onRefresh={async () => {
+                    await loadTasks()
+                    await loadCurrentTimer()
+                  }}
+                  currentTimerTaskId={currentTimer?.task?.id ?? null}
+                  currentTimerStatus={currentTimer?.status ?? null}
                 />
               </TaskSection>
 
@@ -1234,20 +1086,26 @@ export function TasksPageClient() {
                   onTaskAction={handleTaskQuickAction}
                   onSelect={setSelectedTaskId}
                   onToggleStatus={handleToggleStatus}
+                  onRefresh={async () => {
+                    await loadTasks()
+                    await loadCurrentTimer()
+                  }}
+                  currentTimerTaskId={currentTimer?.task?.id ?? null}
+                  currentTimerStatus={currentTimer?.status ?? null}
                 />
               </TaskSection>
 
-              <TaskSection
-                title="已完成"
-                count={completedTasks.length}
-                collapsed={collapsedSections.completed}
-                onToggle={() => toggleSection("completed")}
-              >
-                <TaskList
-                  section="completed"
-                  items={completedTasks}
-                  selectedTaskId={selectedTaskId}
-                  activeListId={activeListId}
+                <TaskSection
+                  title="已完成"
+                  count={completedTasks.length}
+                  collapsed={collapsedSections.completed}
+                  onToggle={() => toggleSection("completed")}
+                >
+                  <TaskList
+                    section="completed"
+                    items={completedTasks}
+                    selectedTaskId={selectedTaskId}
+                    activeListId={activeListId}
                   draggingTaskId={draggingTaskId}
                   dropTargetTaskId={dropTargetTaskId}
                   newTaskHighlightId={newTaskHighlightId}
@@ -1263,8 +1121,15 @@ export function TasksPageClient() {
                   onTaskAction={handleTaskQuickAction}
                   onSelect={setSelectedTaskId}
                   onToggleStatus={handleToggleStatus}
+                  onRefresh={async () => {
+                    await loadTasks()
+                    await loadCurrentTimer()
+                  }}
+                  currentTimerTaskId={currentTimer?.task?.id ?? null}
+                  currentTimerStatus={currentTimer?.status ?? null}
                 />
-              </TaskSection>
+                </TaskSection>
+              </div>
             </div>
           )}
         </div>
@@ -1273,6 +1138,39 @@ export function TasksPageClient() {
       </div>
 
       <TaskDetailDrawer taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} onUpdated={() => loadTasks()} />
+      <AiTaskDraftReviewSheet
+        open={showAiDraftReview}
+        drafts={aiDrafts.map((draft) => ({ ...draft, clientId: draft.clientId ?? draft.title ?? Math.random().toString() }))}
+        onClose={() => setShowAiDraftReview(false)}
+        onChange={(nextDrafts) => setAiDrafts(nextDrafts)}
+        onConfirm={async () => {
+          const selectedDrafts = aiDrafts.filter((draft) => draft.selected && draft.title?.trim())
+          if (selectedDrafts.length === 0) {
+            setShowAiDraftReview(false)
+            return
+          }
+          const { firstCreatedTask, createdCount } = await createTasksFromDrafts(selectedDrafts)
+          if (firstCreatedTask) {
+            setItems((current) => [firstCreatedTask, ...current.map((task) => ({ ...task, sortOrder: task.sortOrder + 1 }))])
+            setNewTaskHighlightId(firstCreatedTask.id)
+            setSelectedTaskId(firstCreatedTask.id)
+          }
+          setShowAiDraftReview(false)
+          setAiDrafts([])
+          setDraftTitle("")
+          setDraftStartAt("")
+          setDraftDueAt("")
+          setDraftPriority("medium")
+          setDraftListId(activeListId)
+          setDraftTagNames([])
+          setDraftSubtasks([])
+          setActiveQuickDate(null)
+          setShowCalendarPicker(false)
+          setShowMoreOptions(false)
+          setAiParsedSummary(`AI 已创建 ${createdCount} 条任务。`)
+          await loadTasks()
+        }}
+      />
     </>
   )
 }
@@ -1293,7 +1191,7 @@ function TaskSection({
   children: React.ReactNode
 }) {
   return (
-    <section className={`overflow-hidden rounded-xl border bg-card shadow-none ${tone === "overdue" ? "border-orange-200/70" : "border-border/80"}`}>
+    <section className={`flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-none ${tone === "overdue" ? "border-destructive/20" : "border-border/80"}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -1304,7 +1202,7 @@ function TaskSection({
         <span className="text-[11px] text-muted-foreground">{count}</span>
       </button>
 
-      {!collapsed ? <div className="border-t border-border/60">{children}</div> : null}
+      {!collapsed ? <div className="min-h-0 border-t border-border/60">{children}</div> : null}
     </section>
   )
 }
@@ -1326,6 +1224,9 @@ function TaskList({
   onTaskAction,
   onSelect,
   onToggleStatus,
+  onRefresh,
+  currentTimerTaskId,
+  currentTimerStatus,
 }: {
   section: "pending" | "overdue" | "completed"
   items: TaskItem[]
@@ -1346,22 +1247,31 @@ function TaskList({
       | { type: "today" | "tomorrow" | "clearDate" }
       | { type: "priority"; value: TaskItem["priority"] }
       | { type: "move"; value: string }
+      | { type: "pin" }
+      | { type: "archive" }
       | { type: "delete" },
   ) => Promise<void>
   onSelect: (taskId: string) => void
   onToggleStatus: (task: TaskItem, event: React.MouseEvent<HTMLButtonElement>) => void
+  onRefresh: () => Promise<void>
+  currentTimerTaskId: string | null
+  currentTimerStatus: "running" | "paused" | null
 }) {
   if (items.length === 0) {
     return <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无任务</div>
   }
 
   return (
-    <div className="divide-y divide-border/60">
+    <div className="max-h-[min(34rem,calc(100vh-19rem))] overflow-y-auto divide-y divide-border/60">
       {items.map((task) => {
         const isSelected = selectedTaskId === task.id
         const dateMeta = formatDateMeta(task)
         const showInsertLine = draggingTaskId && dropTargetTaskId === task.id && draggingTaskId !== task.id
         const isNewTask = newTaskHighlightId === task.id
+        const isTimingTask = currentTimerTaskId === task.id
+        const showSource = task.source === "ai" || task.source === "quick_add"
+        const showEffort = Boolean(task.summary.effortSummary.estimatedMinutes || task.summary.effortSummary.actualMinutes)
+        const showSubtaskProgress = task.summary.subtaskCount > 0
 
         return (
           <div
@@ -1396,12 +1306,15 @@ function TaskList({
                 onSelect(task.id)
               }
             }}
-            className={`group relative w-full cursor-pointer px-3 py-2 text-left transition-all duration-200 hover:bg-muted/30 ${
-              isSelected ? "bg-muted/60" : "bg-transparent"
-            } ${isNewTask ? "bg-emerald-50 ring-1 ring-emerald-200/60 dark:bg-emerald-500/10" : ""} ${draggingTaskId === task.id ? "scale-[0.99] opacity-70" : ""}
-            }`}
+            className={`group relative w-full cursor-pointer rounded-xl px-3 py-3 text-left transition-all duration-200 hover:bg-muted/30 ${
+              isTimingTask
+                ? "bg-primary/10 ring-1 ring-primary/25 shadow-[0_0_0_1px_rgba(99,102,241,0.08)]"
+                : isSelected
+                  ? "bg-muted/60 ring-1 ring-border/70"
+                  : "bg-transparent"
+            } ${isNewTask ? "bg-primary/10 ring-1 ring-primary/20" : ""} ${draggingTaskId === task.id ? "scale-[0.99] opacity-70" : ""}`}
           >
-            {showInsertLine ? <div className="absolute left-3 right-3 top-0 h-0.5 rounded-full bg-sky-500" /> : null}
+            {showInsertLine ? <div className="absolute left-3 right-3 top-0 h-0.5 rounded-full bg-primary/70" /> : null}
             <div className="flex items-start gap-2">
               <span className={`flex w-4 flex-shrink-0 items-center justify-center self-stretch text-muted-foreground/40 transition-opacity ${draggingTaskId === task.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
                 <GripVertical className="h-4 w-4" />
@@ -1418,10 +1331,10 @@ function TaskList({
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className={`line-clamp-1 text-sm leading-5 ${task.status === "done" ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                    <p className={`line-clamp-1 text-sm leading-5 ${task.status === "done" ? "text-muted-foreground line-through" : task.summary.isOverdue ? "text-destructive" : "text-foreground"}`}>
                       {task.title}
                     </p>
-                    {(dateMeta || task.taskTags?.length || (!activeListId && task.list)) ? (
+                    {(dateMeta || (!activeListId && task.list) || isTimingTask || task.summary.isOverdue || showSubtaskProgress || showEffort || showSource) ? (
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         {dateMeta ? (
                           <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5">
@@ -1432,19 +1345,69 @@ function TaskList({
                         {!activeListId && task.list ? (
                           <span className="rounded-md bg-muted px-2 py-0.5">{task.list.emoji ?? "📁"} {task.list.name}</span>
                         ) : null}
-                        {task.taskTags?.map((item) => (
-                          <span key={item.tag.id} className="rounded-md bg-muted px-2 py-0.5">#{item.tag.name}</span>
-                        ))}
+                        {isTimingTask ? (
+                          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 ${currentTimerStatus === "running" ? "bg-primary/12 text-primary" : "bg-amber-500/10 text-amber-700"}`}>
+                            <span className={`h-2 w-2 rounded-full ${currentTimerStatus === "running" ? "bg-primary" : "bg-amber-600"}`} />
+                            {currentTimerStatus === "running" ? "计时中" : "已暂停"}
+                          </span>
+                        ) : null}
+                        {task.summary.isOverdue ? (
+                          <span className="rounded-md bg-destructive/10 px-2 py-0.5 text-destructive">已逾期</span>
+                        ) : null}
+                        {showSubtaskProgress ? (
+                          <span className="rounded-md bg-muted px-2 py-0.5">
+                            子任务 {task.summary.completedSubtaskCount}/{task.summary.subtaskCount}
+                          </span>
+                        ) : null}
+                        {showEffort ? (
+                          <span className="rounded-md bg-muted px-2 py-0.5">
+                            {`耗时 ${task.summary.effortSummary.actualMinutes}m / 预计 ${task.summary.effortSummary.estimatedMinutes ?? 0}m`}
+                          </span>
+                        ) : null}
+                        {showSource ? (
+                          <span className={`rounded-md px-2 py-0.5 ${task.source === "ai" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                            {task.source === "ai" ? "AI" : "快速添加"}
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
 
-                  <div className="flex items-start gap-1">
+                  <div className="flex items-start gap-1.5">
                     <span
-                      className={`mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full ${
-                        task.priority === "high" ? "bg-destructive" : task.priority === "medium" ? "bg-amber-400" : "bg-muted-foreground/30"
+                      className={`mt-1.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${
+                        task.priority === "high" ? "bg-destructive" : task.priority === "medium" ? "bg-primary/60" : "bg-muted-foreground/30"
                       }`}
                     />
+                    <div className={`flex items-center gap-1 transition-opacity ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
+                      {task.status !== "done" && task.status !== "cancelled" && task.status !== "archived" ? (
+                        <div onClick={(event) => event.stopPropagation()}>
+                          <TimerActionButtons compact taskId={task.id} onChanged={onRefresh} />
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void onTaskAction(task, { type: "pin" })
+                        }}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label="置顶任务"
+                      >
+                        <Pin className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void onTaskAction(task, { type: "archive" })
+                        }}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label="归档任务"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </button>
+                    </div>
                     <DropdownSelect
                       items={[
                         { value: "today", label: "设为今天", icon: <CalendarCheck className="h-4 w-4" />, group: "日期" },
@@ -1453,6 +1416,8 @@ function TaskList({
                         { value: "priority:high", label: "高优先级", group: "优先级" },
                         { value: "priority:medium", label: "中优先级", group: "优先级" },
                         { value: "priority:low", label: "低优先级", group: "优先级" },
+                        { value: "task:pin", label: "置顶任务", icon: <Pin className="h-4 w-4" />, group: "操作" },
+                        { value: "task:archive", label: "归档任务", icon: <Archive className="h-4 w-4" />, group: "操作" },
                         ...actionListItems,
                         { value: "danger:delete", label: "删除任务", icon: <Trash2 className="h-4 w-4" />, group: "危险操作", destructive: true },
                       ]}
@@ -1470,6 +1435,12 @@ function TaskList({
                         }
                         if (value.startsWith("move:")) {
                           return void onTaskAction(task, { type: "move", value: value.slice(5) })
+                        }
+                        if (value === "task:pin") {
+                          return void onTaskAction(task, { type: "pin" })
+                        }
+                        if (value === "task:archive") {
+                          return void onTaskAction(task, { type: "archive" })
                         }
                         if (value === "danger:delete") {
                           return void onTaskAction(task, { type: "delete" })

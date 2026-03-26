@@ -1,8 +1,7 @@
 import { prisma } from "@/server/db/client"
 
-export async function ensureUserSpace(user: {
+export async function syncUserProfileFromSession(user: {
   id: string
-  email: string
   name?: string | null
   image?: string | null
 }) {
@@ -13,17 +12,18 @@ export async function ensureUserSpace(user: {
       image: user.image ?? undefined,
     },
   })
+}
 
-  const existing = await prisma.personalSpace.findUnique({
+export async function ensureUserSpace(user: {
+  id: string
+  email: string
+  name?: string | null
+  image?: string | null
+}) {
+  return prisma.personalSpace.upsert({
     where: { userId: user.id },
-  })
-
-  if (existing) {
-    return existing
-  }
-
-  return prisma.personalSpace.create({
-    data: {
+    update: {},
+    create: {
       userId: user.id,
       name: user.name?.trim() || user.email.split("@")[0] || "My Space",
     },

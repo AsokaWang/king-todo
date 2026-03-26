@@ -1,5 +1,5 @@
-import { PagePlaceholder } from "@/components/shared/page-placeholder"
+import { InsightsPageClient } from "@/features/insights/components/insights-page-client"
 
 export default function InsightsPage() {
-  return <PagePlaceholder title="洞察" description="承接任务完成率、时间分布与趋势分析。" />
+  return <InsightsPageClient />
 }

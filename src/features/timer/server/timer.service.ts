@@ -17,12 +17,28 @@ function ensureSessionExists<T>(session: T | null): T {
   return session
 }
 
+async function findTimerSessionForUser(spaceId: string, sessionId: string) {
+  return prisma.timerSession.findFirst({
+    where: {
+      id: sessionId,
+      spaceId,
+    },
+    include: { task: true },
+  })
+}
+
 function getElapsedSec(startedAt: Date | null, now: Date) {
   if (!startedAt) {
     return 0
   }
 
   return Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000))
+}
+
+function assertTimerStatus(status: string, allowed: string[]) {
+  if (!allowed.includes(status)) {
+    throw new HttpError(409, "INVALID_TIMER_STATE", `Timer session is in invalid state: ${status}`)
+  }
 }
 
 export async function getCurrentTimerForUser(user: CurrentUser) {
@@ -98,15 +114,13 @@ export async function startTimerForUser(user: CurrentUser, taskId?: string) {
 }
 
 export async function pauseTimerForUser(user: CurrentUser, sessionId?: string) {
+  const space = await ensureUserSpace(user)
   const now = new Date()
   const session = ensureSessionExists(
-    sessionId
-      ? await prisma.timerSession.findFirst({
-          where: { id: sessionId },
-          include: { task: true },
-        })
-      : await getCurrentTimerForUser(user),
+    sessionId ? await findTimerSessionForUser(space.id, sessionId) : await getCurrentTimerForUser(user),
   )
+
+  assertTimerStatus(session.status, ["running", "paused"])
 
   if (session.status !== "running") {
     return session
@@ -127,15 +141,13 @@ export async function pauseTimerForUser(user: CurrentUser, sessionId?: string) {
 }
 
 export async function resumeTimerForUser(user: CurrentUser, sessionId?: string) {
+  const space = await ensureUserSpace(user)
   const now = new Date()
   const session = ensureSessionExists(
-    sessionId
-      ? await prisma.timerSession.findFirst({
-          where: { id: sessionId },
-          include: { task: true },
-        })
-      : await getCurrentTimerForUser(user),
+    sessionId ? await findTimerSessionForUser(space.id, sessionId) : await getCurrentTimerForUser(user),
   )
+
+  assertTimerStatus(session.status, ["running", "paused"])
 
   if (session.status !== "paused") {
     return session
@@ -156,13 +168,10 @@ export async function stopTimerForUser(user: CurrentUser, sessionId?: string) {
   const space = await ensureUserSpace(user)
   const now = new Date()
   const session = ensureSessionExists(
-    sessionId
-      ? await prisma.timerSession.findFirst({
-          where: { id: sessionId },
-          include: { task: true },
-        })
-      : await getCurrentTimerForUser(user),
+    sessionId ? await findTimerSessionForUser(space.id, sessionId) : await getCurrentTimerForUser(user),
   )
+
+  assertTimerStatus(session.status, ["running", "paused"])
 
   const totalDurationSec =
     session.accumulatedSec + (session.status === "running" ? getElapsedSec(session.startedAt, now) : 0)

@@ -1,5 +1,5 @@
-import { PagePlaceholder } from "@/components/shared/page-placeholder"
+import { QuadrantsPageClient } from "@/features/quadrants/components/quadrants-page-client"
 
 export default function QuadrantsPage() {
-  return <PagePlaceholder title="四象限" description="按重要/紧急拆分任务，后续接入真实矩阵视图。" />
+  return <QuadrantsPageClient />
 }

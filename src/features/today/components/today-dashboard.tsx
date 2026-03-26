@@ -7,7 +7,7 @@ import { TimerActionButtons } from "@/components/timer/timer-action-buttons"
 type TodayTask = {
   id: string
   title: string
-  status: "todo" | "in_progress" | "done" | "archived"
+  status: "todo" | "in_progress" | "done" | "cancelled" | "archived"
   priority: "low" | "medium" | "high"
   dueAt?: string | null
 }
@@ -43,6 +43,7 @@ const statusLabelMap = {
   todo: "待办",
   in_progress: "进行中",
   done: "已完成",
+  cancelled: "已取消",
   archived: "已归档",
 }
 
@@ -79,9 +80,12 @@ export function TodayDashboard({ data }: TodayDashboardProps) {
   return (
     <div className="grid min-h-[calc(100vh-8rem)] gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div className="min-w-0 space-y-5">
-        <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
+        <section className="rounded-2xl border border-primary/15 bg-[linear-gradient(180deg,rgba(99,102,241,0.06),rgba(99,102,241,0.02))] p-5 shadow-card">
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Today</p>
+            <div className="inline-flex items-center gap-2 rounded-full bg-background/80 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.18em] text-primary shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-primary" />
+              Today Focus
+            </div>
             <h1 className="text-2xl font-semibold tracking-tight">今天</h1>
             <p className="text-sm text-muted-foreground">当前页面直接消费 `/api/today` 聚合后的真实数据。</p>
           </div>
@@ -171,6 +175,16 @@ export function TodayDashboard({ data }: TodayDashboardProps) {
             <li>先启动一项高优任务的专注计时</li>
             <li>完成后回到时间记录页复核投入</li>
           </ul>
+        </article>
+
+        <article className="rounded-2xl border border-primary/20 bg-primary/5 p-5 shadow-card">
+          <p className="text-sm font-medium text-foreground">执行链提示</p>
+          <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <li>1. 先在任务页收集或用 AI 拆解任务</li>
+            <li>2. 为高优任务补上时间与清单归属</li>
+            <li>3. 直接启动计时进入执行</li>
+            <li>4. 在洞察页复盘完成率与投入时长</li>
+          </ol>
         </article>
       </aside>
     </div>

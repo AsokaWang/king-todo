@@ -3,14 +3,8 @@ import { prisma } from "@/server/db/client"
 import { ensureUserSpace } from "@/server/db/bootstrap"
 import { fail, ok } from "@/server/api/response"
 import { requireSession } from "@/server/auth/require-session"
-
-const aiConfigSchema = z.object({
-  provider: z.enum(["openai", "anthropic", "custom"]),
-  model: z.string().min(1),
-  apiKey: z.string().optional().default(""),
-  baseUrl: z.string().optional().default(""),
-  temperature: z.number().min(0).max(1).default(0.2),
-})
+import { HttpError } from "@/server/errors/http"
+import { aiConfigSchema, runAiModel, validateAiRuntimeConfig } from "@/server/ai/model-client"
 
 const parseTaskBodySchema = z.object({
   input: z.string().trim().min(1).max(1200),
@@ -22,17 +16,22 @@ const parseTaskBodySchema = z.object({
   }),
 })
 
+const looseDatetimeSchema = z.string().trim().min(1).nullable().optional()
+
 const parsedTaskItemSchema = z.object({
   title: z.string().trim().min(1).max(200).nullable(),
   description: z.string().trim().max(4000).nullable().optional(),
-  startAt: z.string().datetime().nullable().optional(),
-  dueAt: z.string().datetime().nullable().optional(),
+  startAt: looseDatetimeSchema,
+  dueAt: looseDatetimeSchema,
   priority: z.enum(["low", "medium", "high"]).nullable().optional(),
   confidence: z.number().min(0).max(1).default(0.75),
   tagNames: z.array(z.string().trim().min(1).max(50)).max(10).default([]),
   listName: z.string().trim().max(120).nullable().optional(),
   action: z.enum(["create", "pinToTop", "archive", "abandon"]).default("create"),
   subtasks: z.array(z.object({ title: z.string().trim().min(1).max(200) })).max(8).default([]),
+  rationale: z.string().trim().max(240).nullable().optional(),
+  riskLevel: z.enum(["low", "medium", "high"]).default("low"),
+  suggestions: z.array(z.string().trim().max(120)).max(5).default([]),
   warnings: z.array(z.string().trim().max(200)).max(10).default([]),
 })
 
@@ -53,68 +52,40 @@ function extractJsonObject(text: string) {
   }
 }
 
-async function callOpenAI(messages: Array<{ role: "system" | "user"; content: string }>, config: z.infer<typeof aiConfigSchema>) {
-  const response = await fetch(config.baseUrl || "https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: config.model, temperature: config.temperature, messages }),
-  })
-  const payload = await response.json()
-  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI 请求失败")
-  return payload?.choices?.[0]?.message?.content ?? ""
-}
+function normalizeLooseDatetime(value: string | null | undefined) {
+  if (!value) return null
 
-async function callAnthropic(prompt: string, systemPrompt: string | undefined, config: z.infer<typeof aiConfigSchema>) {
-  const response = await fetch(config.baseUrl || "https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": config.apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ model: config.model, max_tokens: 1800, temperature: config.temperature, system: systemPrompt, messages: [{ role: "user", content: prompt }] }),
-  })
-  const payload = await response.json()
-  if (!response.ok) throw new Error(payload?.error?.message ?? "Anthropic 请求失败")
-  return payload?.content?.[0]?.text ?? ""
-}
+  const input = value.trim()
+  if (!input) return null
 
-async function callCustom(prompt: string, config: z.infer<typeof aiConfigSchema>) {
-  if (!config.baseUrl) throw new Error("Custom provider 需要 Base URL")
-  const response = await fetch(config.baseUrl, {
-    method: "POST",
-    headers: {
-      Authorization: config.apiKey ? `Bearer ${config.apiKey}` : "",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: config.model, temperature: config.temperature, prompt }),
-  })
-  const payload = await response.json()
-  if (!response.ok) throw new Error(payload?.error?.message ?? "Custom provider 请求失败")
-  return payload?.output ?? payload?.text ?? JSON.stringify(payload)
-}
-
-async function runModel(prompt: string, systemPrompt: string, config: z.infer<typeof aiConfigSchema>) {
-  if (config.provider === "openai") {
-    return callOpenAI([{ role: "system", content: systemPrompt }, { role: "user", content: prompt }], config)
+  const direct = new Date(input)
+  if (!Number.isNaN(direct.getTime())) {
+    return direct.toISOString()
   }
-  if (config.provider === "anthropic") {
-    return callAnthropic(prompt, systemPrompt, config)
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input)) {
+    const local = new Date(`${input}:00`)
+    if (!Number.isNaN(local.getTime())) {
+      return local.toISOString()
+    }
   }
-  return callCustom(`${systemPrompt}\n\n${prompt}`, config)
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(input)) {
+    const normalized = input.replace(" ", "T")
+    const local = new Date(normalized.length === 16 ? `${normalized}:00` : normalized)
+    if (!Number.isNaN(local.getTime())) {
+      return local.toISOString()
+    }
+  }
+
+  throw new HttpError(400, "AI_PARSE_INVALID_DATETIME", `AI 返回的时间格式无法识别：${input}`)
 }
 
 export async function POST(request: Request) {
   try {
     const session = await requireSession()
     const body = parseTaskBodySchema.parse(await request.json())
-
-    if (!body.config.apiKey && body.config.provider !== "custom") {
-      throw new Error("请先在设置中配置 AI API Key")
-    }
+    validateAiRuntimeConfig(body.config)
 
     const space = await ensureUserSpace(session.user)
     const [lists, tags] = await Promise.all([
@@ -143,6 +114,9 @@ export async function POST(request: Request) {
       "listName": string | null,
       "action": "create" | "pinToTop" | "archive" | "abandon",
       "subtasks": [{"title": string}],
+      "rationale": string | null,
+      "riskLevel": "low" | "medium" | "high",
+      "suggestions": string[],
       "warnings": string[]
     }
   ]
@@ -168,9 +142,11 @@ export async function POST(request: Request) {
 ${body.input}
 >>>`
 
-    const raw = await runModel(prompt, systemPrompt, body.config)
+    const raw = await runAiModel({ config: body.config, prompt, systemPrompt })
     const parsedRaw = extractJsonObject(raw)
-    if (!parsedRaw) throw new Error("AI 没有返回可解析的结构化结果")
+    if (!parsedRaw) {
+      throw new HttpError(502, "AI_PARSE_INVALID", "AI 没有返回可解析的结构化结果")
+    }
 
     const parsed = parsedBatchSchema.parse(parsedRaw)
 
@@ -182,8 +158,8 @@ ${body.input}
           clientId: `ai-${Date.now()}-${index}`,
           title: task.title,
           description: task.description ?? null,
-          startAt: task.startAt ?? null,
-          dueAt: task.dueAt ?? null,
+          startAt: normalizeLooseDatetime(task.startAt),
+          dueAt: normalizeLooseDatetime(task.dueAt),
           priority: task.priority ?? null,
           confidence: task.confidence,
           tagNames: Array.from(new Set(task.tagNames)),
@@ -191,6 +167,9 @@ ${body.input}
           listName: matchedList?.name ?? task.listName ?? null,
           action: task.action,
           subtasks: task.subtasks,
+          rationale: task.rationale ?? null,
+          riskLevel: task.riskLevel,
+          suggestions: task.suggestions,
           warnings: task.warnings,
         }
       }),
@@ -199,6 +178,14 @@ ${body.input}
       raw,
     })
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return fail(new HttpError(400, "AI_PARSE_SCHEMA_INVALID", "AI 返回的数据格式不符合预期。", error.flatten()))
+    }
+
+    if (error instanceof Error && !(error instanceof HttpError)) {
+      return fail(new HttpError(502, "AI_PROVIDER_ERROR", error.message || "AI 服务请求失败"))
+    }
+
     return fail(error)
   }
 }

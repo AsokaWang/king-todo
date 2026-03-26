@@ -2,21 +2,23 @@ import { auth } from "../src/lib/auth"
 import { prisma } from "../src/server/db/client"
 import { ensureUserSpace } from "../src/server/db/bootstrap"
 
+const demoPassword = process.env.DEMO_ACCOUNT_PASSWORD || "Password123!"
+
 const testAccounts = [
   {
     name: "Demo Admin",
     email: "demo-admin@kingtodo.local",
-    password: "Password123!",
+    password: demoPassword,
   },
   {
     name: "Demo User",
     email: "demo-user@kingtodo.local",
-    password: "Password123!",
+    password: demoPassword,
   },
   {
     name: "Demo Planner",
     email: "demo-planner@kingtodo.local",
-    password: "Password123!",
+    password: demoPassword,
   },
 ]
 

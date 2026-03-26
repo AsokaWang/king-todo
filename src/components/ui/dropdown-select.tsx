@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { Check, ChevronRight, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils/cn"
@@ -99,17 +99,29 @@ export function DropdownSelect({
     [groupedItems, showCreateOption, normalizedQuery, createLabel, query],
   )
 
-  useEffect(() => {
-    if (!open) {
-      setHighlightedIndex(-1)
-      return
-    }
+  const toggleValue = useCallback(
+    (nextValue: string) => {
+      if (multiple) {
+        const current = values ?? []
+        const next = current.includes(nextValue) ? current.filter((item) => item !== nextValue) : [...current, nextValue]
+        onValuesChange?.(next)
+      } else {
+        onChange?.(nextValue)
+      }
 
-    const firstEnabledIndex = navigableItems.findIndex((item) => item.__kind === "create" || !item.disabled)
-    if (firstEnabledIndex >= 0) {
-      setHighlightedIndex(firstEnabledIndex)
-    }
+      if (shouldCloseOnSelect) {
+        setOpen(false)
+      }
+    },
+    [multiple, onChange, onValuesChange, shouldCloseOnSelect, values],
+  )
+
+  const defaultHighlightedIndex = useMemo(() => {
+    if (!open) return -1
+    return navigableItems.findIndex((item) => item.__kind === "create" || !item.disabled)
   }, [navigableItems, open])
+
+  const effectiveHighlightedIndex = highlightedIndex >= 0 ? highlightedIndex : defaultHighlightedIndex
 
   useEffect(() => {
     if (!open) return
@@ -139,9 +151,9 @@ export function DropdownSelect({
           window.setTimeout(() => itemRefs.current[next]?.scrollIntoView({ block: "nearest" }), 0)
           return next
         })
-      } else if (event.key === "Enter" && open && highlightedIndex >= 0) {
+      } else if (event.key === "Enter" && open && effectiveHighlightedIndex >= 0) {
         event.preventDefault()
-        const highlighted = navigableItems[highlightedIndex]
+        const highlighted = navigableItems[effectiveHighlightedIndex]
         if (highlighted?.__kind === "create") {
           void onCreateOption?.(query.trim())
           setQuery("")
@@ -158,21 +170,7 @@ export function DropdownSelect({
       window.removeEventListener("mousedown", handlePointerDown)
       window.removeEventListener("keydown", handleKeyDown)
     }
-  }, [highlightedIndex, navigableItems, onCreateOption, open, query, shouldCloseOnSelect])
-
-  function toggleValue(nextValue: string) {
-    if (multiple) {
-      const current = values ?? []
-      const next = current.includes(nextValue) ? current.filter((item) => item !== nextValue) : [...current, nextValue]
-      onValuesChange?.(next)
-    } else {
-      onChange?.(nextValue)
-    }
-
-    if (shouldCloseOnSelect) {
-      setOpen(false)
-    }
-  }
+  }, [effectiveHighlightedIndex, navigableItems, onCreateOption, open, query, shouldCloseOnSelect, toggleValue])
 
   const triggerContent = renderTrigger ? (
     renderTrigger({ open, selectedItems, toggle: () => setOpen((current) => !current) })
@@ -237,15 +235,15 @@ export function DropdownSelect({
   )
 
   return (
-    <div className={cn("relative", className)} ref={rootRef}>
+    <div className={cn("relative", open && "z-50", className)} ref={rootRef}>
       {triggerContent}
 
       {open ? (
         <div
           className={cn(
             variant === "action"
-              ? "absolute right-0 top-[calc(100%+6px)] z-20 min-w-40 rounded-xl border border-border/70 bg-card/95 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-md"
-              : "absolute left-0 top-[calc(100%+6px)] z-20 w-full rounded-2xl border border-border/70 bg-card/95 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-md",
+              ? "absolute right-0 top-[calc(100%+6px)] z-[60] min-w-40 rounded-xl border border-border/70 bg-card/95 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-md"
+              : "absolute left-0 top-[calc(100%+6px)] z-[60] w-full rounded-2xl border border-border/70 bg-card/95 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-md",
             menuClassName,
           )}
         >
@@ -295,7 +293,7 @@ export function DropdownSelect({
                               variant === "action"
                                 ? "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-foreground/85 transition-colors hover:bg-muted/55 hover:text-foreground"
                                 : "flex min-h-10 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-muted/55",
-                            highlightedIndex === itemIndex ? "bg-muted/65 text-foreground" : "",
+                            effectiveHighlightedIndex === itemIndex ? "bg-muted/65 text-foreground" : "",
                             active && variant !== "action" ? "bg-primary/10 text-foreground" : "",
                             item.destructive ? "text-destructive hover:bg-destructive/10 hover:text-destructive" : "",
                             item.disabled ? "cursor-not-allowed opacity-50" : "",
@@ -328,7 +326,7 @@ export function DropdownSelect({
                 }}
                 className={cn(
                   "mt-1 flex min-h-10 w-full items-center rounded-lg border border-dashed border-border px-3 text-sm text-foreground/85 transition-colors hover:bg-muted/55",
-                  highlightedIndex === navigableItems.length - 1 ? "bg-muted/65" : "",
+                  effectiveHighlightedIndex === navigableItems.length - 1 ? "bg-muted/65" : "",
                 )}
               >
                 {createLabel ?? "创建"} “{query.trim()}”
