@@ -143,6 +143,7 @@ function toTaskDetailView(task: {
   list?: { id: string; name: string; emoji?: string | null; color?: string | null } | null
   parentTask?: { id: string; title: string } | null
   taskTags?: Array<{ tag: { id: string; name: string; color?: string | null } }>
+  sourceFlows?: Array<{ id: string; title: string; status: "draft" | "active" | "done" | "cancelled"; steps: Array<{ status: "todo" | "in_progress" | "done" | "cancelled" }> }>
   reminders?: Array<{ id: string; triggerAt: Date; status?: string }>
   recurrenceRule?: { id: string; rrule: string } | null
   subtasks?: Array<{ id: string; title: string; status: "todo" | "in_progress" | "done" | "cancelled" | "archived"; sortOrder?: number | null; taskTags?: Array<{ tag: { id: string; name: string; color?: string | null } }> }>
@@ -155,6 +156,15 @@ function toTaskDetailView(task: {
     updatedAt: task.updatedAt?.toISOString(),
     reminders: task.reminders?.map((item) => ({ id: item.id, triggerAt: item.triggerAt.toISOString(), status: item.status })) ?? [],
     recurrenceRule: task.recurrenceRule ?? null,
+    flow: task.sourceFlows?.[0]
+      ? {
+          id: task.sourceFlows[0].id,
+          title: task.sourceFlows[0].title,
+          status: task.sourceFlows[0].status,
+          stepCount: task.sourceFlows[0].steps.length,
+          completedStepCount: task.sourceFlows[0].steps.filter((step) => step.status === "done").length,
+        }
+      : null,
     subtasks: (task.subtasks ?? []).map((subtask) => ({
       id: subtask.id,
       title: subtask.title,
@@ -388,6 +398,13 @@ export async function getTaskByIdForUser(user: CurrentUser, taskId: string) {
           id: true,
           title: true,
         },
+      },
+      sourceFlows: {
+        include: {
+          steps: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 1,
       },
       taskTags: {
         include: {

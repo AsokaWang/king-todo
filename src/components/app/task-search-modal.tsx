@@ -26,6 +26,12 @@ type ParsedQuery = {
   priority: "all" | SearchTaskItem["priority"]
 }
 
+type CommandItem = {
+  label: string
+  hint: string
+  action: () => void
+}
+
 type TaskSearchModalProps = {
   open: boolean
   onClose: () => void
@@ -96,6 +102,24 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
     inputRef.current?.focus()
   }, [open])
 
+  const quickCommands = useMemo<CommandItem[]>(
+    () => [
+      { label: "打开今天", hint: "查看今日任务视图", action: () => { router.push("/tasks?view=today"); onClose() } },
+      { label: "查看逾期任务", hint: "回到任务页并优先处理逾期", action: () => { router.push("/tasks?view=all"); onClose() } },
+      { label: "进入 AI 助手", hint: "让 AI 帮你拆解任务", action: () => { router.push("/ai"); onClose() } },
+      { label: "查看洞察", hint: "复盘完成率与投入时长", action: () => { router.push("/insights"); onClose() } },
+      { label: "进入日历", hint: "查看排期与时间分布", action: () => { router.push("/calendar"); onClose() } },
+    ],
+    [onClose, router],
+  )
+
+  const parsedQuery = useMemo(() => parseQuery(query), [query])
+
+  const visibleCommands = useMemo<CommandItem[]>(
+    () => quickCommands.filter((command) => !query.trim() || command.label.includes(parsedQuery.text) || command.hint.includes(parsedQuery.text)),
+    [parsedQuery.text, query, quickCommands],
+  )
+
   useEffect(() => {
     if (!open) {
       return
@@ -136,8 +160,7 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
   }, [activeIndex, items, onClose, open, router])
 
   useEffect(() => {
-    const parsed = parseQuery(query)
-    if (!open || (!query.trim() && !parsed.text)) {
+    if (!open || (!query.trim() && !parsedQuery.text)) {
       setItems([])
       setActiveIndex(0)
       return
@@ -149,10 +172,9 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
       setIsLoading(true)
 
       try {
-        const parsed = parseQuery(query)
-        const params = new URLSearchParams({ q: parsed.text || query.trim(), pageSize: "20" })
-        const effectiveStatus = parsed.status !== "all" ? parsed.status : statusFilter
-        const effectivePriority = parsed.priority !== "all" ? parsed.priority : priorityFilter
+        const params = new URLSearchParams({ q: parsedQuery.text || query.trim(), pageSize: "20" })
+        const effectiveStatus = parsedQuery.status !== "all" ? parsedQuery.status : statusFilter
+        const effectivePriority = parsedQuery.priority !== "all" ? parsedQuery.priority : priorityFilter
         if (effectiveStatus !== "all") params.set("status", effectiveStatus)
         if (effectivePriority !== "all") params.set("priority", effectivePriority)
         const response = await fetch(`/api/tasks?${params.toString()}`, {
@@ -178,24 +200,13 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
       active = false
       window.clearTimeout(timeout)
     }
-  }, [open, priorityFilter, query, statusFilter])
-
-  const quickCommands = useMemo(
-    () => [
-      { label: "打开今天", action: () => { router.push("/tasks?view=today"); onClose() } },
-      { label: "查看逾期任务", action: () => { router.push("/tasks?view=all"); onClose() } },
-      { label: "进入 AI 助手", action: () => { router.push("/ai"); onClose() } },
-      { label: "查看洞察", action: () => { router.push("/insights"); onClose() } },
-      { label: "进入日历", action: () => { router.push("/calendar"); onClose() } },
-    ],
-    [onClose, router],
-  )
+  }, [open, parsedQuery, priorityFilter, query, statusFilter])
 
   const resultCountText = useMemo(() => {
-    if (!query.trim()) return "输入关键词开始��索，或直接使用快捷命令"
+    if (!query.trim()) return "输入关键词开始检索，或直接使用快捷命令"
     if (isLoading) return "正在检索任务"
-    return `共 ${items.length} 条结果`
-  }, [isLoading, items.length, query])
+    return `任务 ${items.length} 条 · 命令 ${visibleCommands.length} 条`
+  }, [isLoading, items.length, query, visibleCommands.length])
 
   if (!open) {
     return null
@@ -216,7 +227,7 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
             onChange={(event) => setQuery(event.target.value)}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder="搜索任务标题、描述、提醒线索"
+            placeholder="搜索任务标题、描述，或输入 status:done priority:high"
           />
           <button
             type="button"
@@ -230,7 +241,7 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
 
         <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">{resultCountText}</div>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-          {[{ key: "all", label: "全部状态" }, { key: "todo", label: "待办" }, { key: "in_progress", label: "进行中" }, { key: "done", label: "已完成" }].map((item) => (
+          {[{ key: "all", label: "全部状态" }, { key: "todo", label: "待办" }, { key: "in_progress", label: "进行中" }, { key: "done", label: "已完成" }, { key: "cancelled", label: "已取消" }].map((item) => (
             <button key={item.key} type="button" onClick={() => setStatusFilter(item.key as typeof statusFilter)} className={`rounded-full px-2.5 py-1 text-xs ${statusFilter === item.key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>{item.label}</button>
           ))}
           {[{ key: "all", label: "全部优先级" }, { key: "high", label: "高" }, { key: "medium", label: "中" }, { key: "low", label: "低" }].map((item) => (
@@ -245,12 +256,16 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
                 <div className="text-sm text-muted-foreground">输入文本开始检索任务，支持回车快速打开。</div>
                 <div className="text-xs text-muted-foreground">支持语法：`status:done priority:high 周报`</div>
               </div>
-              <div className="grid gap-2">
-                {quickCommands.map((command) => (
-                  <button key={command.label} type="button" onClick={command.action} className="rounded-xl border border-border bg-background px-3 py-3 text-left text-sm hover:bg-muted/50">
-                    <span className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />{command.label}</span>
-                  </button>
-                ))}
+              <div className="space-y-2">
+                <div className="px-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Commands</div>
+                <div className="grid gap-2">
+                  {visibleCommands.map((command) => (
+                    <button key={command.label} type="button" onClick={command.action} className="rounded-xl border border-border bg-background px-3 py-3 text-left text-sm hover:bg-muted/50">
+                      <div className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />{command.label}</div>
+                      <p className="mt-1 text-xs text-muted-foreground">{command.hint}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           ) : isLoading ? (
@@ -262,44 +277,60 @@ export function TaskSearchModal({ open, onClose }: TaskSearchModalProps) {
                 </div>
               ))}
             </div>
-          ) : items.length ? (
-            <div className="px-2 py-2">
-              <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Tasks</div>
-              {items.map((item, index) => (
-                <Link
-                  key={item.id}
-                  href={`/tasks/${item.id}`}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  onClick={onClose}
-                  className={`block rounded-xl px-3 py-2.5 transition-colors ${
-                    index === activeIndex ? "bg-primary/8 ring-1 ring-primary/10" : "hover:bg-muted/70"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${priorityDotClassMap[item.priority]}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="truncate text-[13px] font-medium text-foreground">{item.title}</p>
-                        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{statusLabelMap[item.status]}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                        {item.description?.trim() ? <p className="truncate">{item.description.trim()}</p> : <p className="truncate">暂无描述</p>}
-                        {item.dueAt ? (
-                          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 ${item.summary?.isOverdue ? "bg-destructive/10 text-destructive" : "bg-background"}`}>
-                            <CalendarDays className="h-3 w-3" />
-                            {new Date(item.dueAt).toLocaleDateString("zh-CN")}
-                          </span>
-                        ) : null}
-                        {item.list ? <span className="inline-flex shrink-0 rounded-full bg-background px-2 py-0.5">{item.list.emoji ?? "📁"} {item.list.name}</span> : null}
-                        {item.summary?.subtaskCount ? <span className="inline-flex shrink-0 rounded-full bg-background px-2 py-0.5">子任务 {item.summary.completedSubtaskCount}/{item.summary.subtaskCount}</span> : null}
-                      </div>
-                    </div>
+          ) : items.length || visibleCommands.length ? (
+            <div className="space-y-3 px-2 py-2">
+              {visibleCommands.length ? (
+                <div>
+                  <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Commands</div>
+                  <div className="space-y-2">
+                    {visibleCommands.slice(0, 4).map((command) => (
+                      <button key={command.label} type="button" onClick={command.action} className="block w-full rounded-xl border border-border bg-background px-3 py-2.5 text-left transition-colors hover:bg-muted/70">
+                        <div className="inline-flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" />{command.label}</div>
+                        <p className="mt-1 text-xs text-muted-foreground">{command.hint}</p>
+                      </button>
+                    ))}
                   </div>
-                </Link>
-              ))}
+                </div>
+              ) : null}
+
+              {items.length ? (
+                <div>
+                  <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Tasks</div>
+                  {items.map((item, index) => (
+                    <Link
+                      key={item.id}
+                      href={`/tasks/${item.id}`}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      onClick={onClose}
+                      className={`block rounded-xl px-3 py-2.5 transition-colors ${index === activeIndex ? "bg-primary/8 ring-1 ring-primary/10" : "hover:bg-muted/70"}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${priorityDotClassMap[item.priority]}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="truncate text-[13px] font-medium text-foreground">{item.title}</p>
+                            <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{statusLabelMap[item.status]}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                            {item.description?.trim() ? <p className="truncate">{item.description.trim()}</p> : <p className="truncate">暂无描述</p>}
+                            {item.dueAt ? (
+                              <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 ${item.summary?.isOverdue ? "bg-destructive/10 text-destructive" : "bg-background"}`}>
+                                <CalendarDays className="h-3 w-3" />
+                                {new Date(item.dueAt).toLocaleDateString("zh-CN")}
+                              </span>
+                            ) : null}
+                            {item.list ? <span className="inline-flex shrink-0 rounded-full bg-background px-2 py-0.5">{item.list.emoji ?? "📁"} {item.list.name}</span> : null}
+                            {item.summary?.subtaskCount ? <span className="inline-flex shrink-0 rounded-full bg-background px-2 py-0.5">子任务 {item.summary.completedSubtaskCount}/{item.summary.subtaskCount}</span> : null}
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
-            <div className="px-4 py-10 text-center text-sm text-muted-foreground">未找到匹配的任务，试试标题关键词或描述片段。</div>
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">未找到匹配的任务，试试标题关键词、描述片段或命令关键字。</div>
           )}
         </div>
 

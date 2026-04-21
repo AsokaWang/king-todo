@@ -84,6 +84,24 @@ enum AiReportStatus {
   failed
 }
 
+enum FlowStatus {
+  draft
+  active
+  done
+  cancelled
+}
+
+enum FlowStepStatus {
+  todo
+  in_progress
+  done
+  cancelled
+}
+
+enum FlowDependencyType {
+  finish_to_start
+}
+
 model User {
   id            String         @id @default(cuid())
   email         String         @unique
@@ -113,6 +131,7 @@ model PersonalSpace {
   lists           List[]
   tags            Tag[]
   tasks           Task[]
+  flows           Flow[]
   timeEntries     TimeEntry[]
   timerSessions   TimerSession[]
   aiReports       AiReport[]
@@ -228,6 +247,7 @@ model Task {
   recurrenceRule    RecurrenceRule?
   timeEntries       TimeEntry[]
   timerSessions     TimerSession[]
+  sourceFlows       Flow[]          @relation("TaskSourceFlow")
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -310,6 +330,60 @@ model TimerSession {
   task            Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
+}
+
+model Flow {
+  id            String               @id @default(cuid())
+  spaceId       String
+  sourceTaskId  String?
+  title         String
+  description   String?
+  status        FlowStatus           @default(draft)
+  sortOrder     Int                  @default(0)
+  space         PersonalSpace        @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  sourceTask    Task?                @relation("TaskSourceFlow", fields: [sourceTaskId], references: [id], onDelete: SetNull)
+  steps         FlowStep[]
+  dependencies  FlowDependency[]
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([spaceId, status])
+  @@index([spaceId, sortOrder])
+  @@index([sourceTaskId])
+}
+
+model FlowStep {
+  id               String             @id @default(cuid())
+  flowId           String
+  title            String
+  description      String?
+  status           FlowStepStatus     @default(todo)
+  sortOrder        Int                @default(0)
+  estimatedMinutes Int?
+  actualMinutes    Int                @default(0)
+  flow             Flow               @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  outgoingDeps     FlowDependency[]   @relation("FlowDependencyFrom")
+  incomingDeps     FlowDependency[]   @relation("FlowDependencyTo")
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([flowId, sortOrder])
+}
+
+model FlowDependency {
+  id         String             @id @default(cuid())
+  flowId     String
+  fromStepId String
+  toStepId   String
+  type       FlowDependencyType @default(finish_to_start)
+  flow       Flow               @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  fromStep   FlowStep           @relation("FlowDependencyFrom", fields: [fromStepId], references: [id], onDelete: Cascade)
+  toStep     FlowStep           @relation("FlowDependencyTo", fields: [toStepId], references: [id], onDelete: Cascade)
+  createdAt  DateTime           @default(now())
+
+  @@index([flowId])
+  @@index([fromStepId])
+  @@index([toStepId])
 }
 
 model AiReport {

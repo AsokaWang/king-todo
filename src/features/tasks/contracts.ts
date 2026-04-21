@@ -68,11 +68,45 @@ export type TaskListItemView = {
   summary: TaskSummaryView
 }
 
+export type FlowStatus = "draft" | "active" | "done" | "cancelled"
+export type FlowStepStatus = "todo" | "in_progress" | "done" | "cancelled"
+
+export type FlowStepView = {
+  id: string
+  title: string
+  description?: string | null
+  status: FlowStepStatus
+  sortOrder: number
+  estimatedMinutes?: number | null
+  actualMinutes: number
+}
+
+export type FlowDependencyView = {
+  id: string
+  fromStepId: string
+  toStepId: string
+  type: "finish_to_start"
+}
+
+export type FlowView = {
+  id: string
+  sourceTaskId?: string | null
+  title: string
+  description?: string | null
+  status: FlowStatus
+  sortOrder: number
+  steps: FlowStepView[]
+  dependencies: FlowDependencyView[]
+  createdAt?: string
+  updatedAt?: string
+}
+
 export type TaskDetailView = TaskListItemView & {
   createdAt?: string
   updatedAt?: string
   reminders?: Array<{ id: string; triggerAt: string; status?: string }>
   recurrenceRule?: { id: string; rrule: string } | null
+  flow?: { id: string; title: string; status: FlowStatus; stepCount: number; completedStepCount: number } | null
   subtasks?: SubtaskView[]
   timeEntries?: TimeEntryView[]
 }

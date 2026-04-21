@@ -97,6 +97,7 @@ const defaultSectionState = {
   pending: false,
   overdue: false,
   completed: true,
+  cancelled: true,
   childLists: false,
 }
 
@@ -641,10 +642,10 @@ export function TasksPageClient() {
     }
   }
 
-  async function handleReorderWithinSection(dragTaskId: string, dropTaskId: string, section: "pending" | "overdue" | "completed") {
+  async function handleReorderWithinSection(dragTaskId: string, dropTaskId: string, section: TaskListSection) {
     if (dragTaskId === dropTaskId) return
 
-    const sectionTasks = section === "pending" ? pendingTasks : section === "overdue" ? overdueTasks : completedTasks
+    const sectionTasks = section === "pending" ? pendingTasks : section === "overdue" ? overdueTasks : section === "completed" ? completedTasks : cancelledTasks
     const sectionIds = sectionTasks.map((task) => task.id)
     const dragIndex = sectionIds.indexOf(dragTaskId)
     const dropIndex = sectionIds.indexOf(dropTaskId)
@@ -1129,6 +1130,41 @@ export function TasksPageClient() {
                   currentTimerStatus={currentTimer?.status ?? null}
                 />
                 </TaskSection>
+
+                <TaskSection
+                  title="已取消"
+                  count={cancelledTasks.length}
+                  collapsed={collapsedSections.cancelled}
+                  onToggle={() => toggleSection("cancelled")}
+                >
+                  <TaskList
+                    section="cancelled"
+                    items={cancelledTasks}
+                    selectedTaskId={selectedTaskId}
+                    activeListId={activeListId}
+                    draggingTaskId={draggingTaskId}
+                    dropTargetTaskId={dropTargetTaskId}
+                    newTaskHighlightId={newTaskHighlightId}
+                    actionListItems={taskActionListItems}
+                    isTogglingId={isTogglingId}
+                    onDragStart={setDraggingTaskId}
+                    onDragEnd={() => {
+                      setDraggingTaskId(null)
+                      setDropTargetTaskId(null)
+                    }}
+                    onDragEnter={setDropTargetTaskId}
+                    onReorder={handleReorderWithinSection}
+                    onTaskAction={handleTaskQuickAction}
+                    onSelect={setSelectedTaskId}
+                    onToggleStatus={handleToggleStatus}
+                    onRefresh={async () => {
+                      await loadTasks()
+                      await loadCurrentTimer()
+                    }}
+                    currentTimerTaskId={currentTimer?.task?.id ?? null}
+                    currentTimerStatus={currentTimer?.status ?? null}
+                  />
+                </TaskSection>
               </div>
             </div>
           )}
@@ -1207,6 +1243,8 @@ function TaskSection({
   )
 }
 
+type TaskListSection = "pending" | "overdue" | "completed" | "cancelled"
+
 function TaskList({
   section,
   items,
@@ -1228,7 +1266,7 @@ function TaskList({
   currentTimerTaskId,
   currentTimerStatus,
 }: {
-  section: "pending" | "overdue" | "completed"
+  section: TaskListSection
   items: TaskItem[]
   selectedTaskId: string | null
   activeListId: string
@@ -1240,7 +1278,7 @@ function TaskList({
   onDragStart: (taskId: string) => void
   onDragEnd: () => void
   onDragEnter: (taskId: string | null) => void
-  onReorder: (dragTaskId: string, dropTaskId: string, section: "pending" | "overdue" | "completed") => Promise<void>
+  onReorder: (dragTaskId: string, dropTaskId: string, section: TaskListSection) => Promise<void>
   onTaskAction: (
     task: TaskItem,
     action:

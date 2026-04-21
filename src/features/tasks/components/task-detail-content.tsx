@@ -1,6 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   TaskDescriptionSection,
   TaskDetailFooter,
@@ -11,7 +13,7 @@ import {
   TaskTagsSection,
   TaskTimeEntriesSection,
 } from "@/features/tasks/components/task-detail-sections"
-import type { SubtaskView, TaskDetailView, TaskPriority, TaskStatus } from "@/features/tasks/contracts"
+import type { FlowView, SubtaskView, TaskDetailView, TaskPriority, TaskStatus } from "@/features/tasks/contracts"
 
 type TaskDetailData = TaskDetailView
 
@@ -49,6 +51,7 @@ function renderMarkdown(md: string) {
 }
 
 export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }: Props) {
+  const router = useRouter()
   const [task, setTask] = useState<TaskDetailData | null>(null)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -72,6 +75,7 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isStartingTimer, setIsStartingTimer] = useState(false)
+  const [isCreatingFlow, setIsCreatingFlow] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadTaskDetail = useCallback(async (currentTaskId: string) => {
@@ -221,25 +225,35 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
 
   async function reorderSubtask(targetSubtaskId: string) {
     if (!task || !draggingSubtaskId || draggingSubtaskId === targetSubtaskId) return
+    setError(null)
     const subtasks = [...(task.subtasks ?? [])]
     const dragIndex = subtasks.findIndex((item) => item.id === draggingSubtaskId)
     const dropIndex = subtasks.findIndex((item) => item.id === targetSubtaskId)
     if (dragIndex === -1 || dropIndex === -1) return
     const [moved] = subtasks.splice(dragIndex, 1)
     subtasks.splice(dropIndex, 0, moved)
-    await Promise.all(
-      subtasks.map((item, index) =>
-        fetch(`/api/tasks/${item.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ sortOrder: index }),
-        }),
-      ),
-    )
-    setDraggingSubtaskId(null)
-    await loadTaskDetail(task.id)
-    await onUpdated()
+    try {
+      const responses = await Promise.all(
+        subtasks.map((item, index) =>
+          fetch(`/api/tasks/${item.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ sortOrder: index }),
+          }),
+        ),
+      )
+      const failedResponse = responses.find((response) => !response.ok)
+      if (failedResponse) {
+        const payload = await failedResponse.json().catch(() => null)
+        throw new Error(payload?.error?.message ?? "Failed to reorder subtasks.")
+      }
+      setDraggingSubtaskId(null)
+      await loadTaskDetail(task.id)
+      await onUpdated()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to reorder subtasks.")
+    }
   }
 
   function commitTag() {
@@ -282,6 +296,29 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
     }
     await onUpdated()
     onClose?.()
+  }
+
+  async function handleCreateFlow() {
+    if (!task || isCreatingFlow) return
+    setIsCreatingFlow(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/tasks/${task.id}/flow`, { method: "POST", credentials: "include" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload?.error?.message ?? "Failed to create flow.")
+      }
+
+      const flow = payload.data as FlowView
+      await loadTaskDetail(task.id)
+      await onUpdated()
+      router.push(`/flows/${flow.id}`)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to create flow.")
+    } finally {
+      setIsCreatingFlow(false)
+    }
   }
 
   if (!taskId) {
@@ -393,6 +430,29 @@ export function TaskDetailContent({ taskId, onUpdated, onClose, mobile = false }
           />
 
           <TaskStructureGuidanceSection task={task} />
+
+          <div className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Flow</p>
+            {task.flow ? (
+              <div className="mt-3 space-y-2">
+                <p className="font-medium text-foreground">已关联 Flow：{task.flow.title}</p>
+                <p className="text-sm text-muted-foreground">状态：{task.flow.status} · 步骤 {task.flow.completedStepCount}/{task.flow.stepCount}</p>
+                <Link href={`/flows/${task.flow.id}`} className="text-sm font-medium text-primary hover:underline">查看 Flow 工作区</Link>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                <p className="text-sm text-muted-foreground">当前任务尚未升级为 Flow。</p>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateFlow()}
+                  disabled={isCreatingFlow}
+                  className="inline-flex rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isCreatingFlow ? "正在升级..." : "升级为 Flow"}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm">
             <p className="font-medium text-foreground">下一步建议</p>
